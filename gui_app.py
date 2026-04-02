@@ -11,7 +11,7 @@ from tools import web_search_ddg, sniff_and_read_file, image_to_base64_png
 from llm_ollama import ollama_chat, ollama_vision
 from web_search import research
 
-from ui.memory_panel import open_memory_panel
+from training.memory_panel import open_memory_panel
 from memory_autosave import auto_memory_capture
 from memory_decay import start_decay_thread
 from memory_decay       import start_decay_thread
@@ -24,7 +24,7 @@ import samuel_store as store
 
 from datetime import datetime
 
-from ui.personality_panel import open_personality_panel
+from training.personality_panel import open_personality_panel
 
 from style_id import (
     bootstrap as style_bootstrap,
@@ -1405,7 +1405,7 @@ class SamuelGUI:
         if user_text == "Alpha.e.x0.1.eXpr3ss":
             self._clear_input()
             try:
-                from ui.gif_trainer_panel import open_gif_trainer
+                from training.gif_trainer_panel import open_gif_trainer
                 open_gif_trainer(self)
                 self._system_say("GIF reaction trainer opened.")
             except Exception as e:
@@ -1453,7 +1453,7 @@ class SamuelGUI:
             self._clear_input()
             self._system_say("Opening Knowledge Panel...")
             try:
-                from ui.knowledge_panel import open_knowledge_panel
+                from training.knowledge_panel import open_knowledge_panel
                 open_knowledge_panel(self)
             except Exception as e:
                 self._system_say(f"Could not open knowledge panel:\n{e}")
@@ -1468,7 +1468,7 @@ class SamuelGUI:
 
         if user_text == "Alpha.g.x0.1.G00gle":
             self._clear_input()
-            from ui.google_panel import open_google_panel
+            from training.google_panel import open_google_panel
             open_google_panel(self)
             return
 
