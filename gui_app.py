@@ -7,9 +7,9 @@ import webbrowser
 import tkinter as tk
 from tkinter import ttk, filedialog
 
-from tools import web_search_ddg, sniff_and_read_file, image_to_base64_png
-from llm_ollama import ollama_chat, ollama_vision
-from web_search import research
+from Samuel_AI.core.tools import web_search_ddg, sniff_and_read_file, image_to_base64_png
+from Samuel_AI.core.llm_ollama import ollama_chat, ollama_vision
+from Samuel_AI.features.web_search import research
 
 from training.memory_panel import open_memory_panel
 from memory_autosave import auto_memory_capture
@@ -20,7 +20,7 @@ from memory_filter      import should_remember, _is_ephemeral_text
 from background_learner import start_learning_thread
 from knowledge_store    import build_knowledge_context, init_knowledge_db
 
-import samuel_store as store
+import Samuel_AI.core.samuel_store as store
 
 from datetime import datetime
 
@@ -34,7 +34,7 @@ from style_id import (
     UNKNOWN_BUCKET,
 )
 # --- GIF Reaction System ---
-from reaction_gif_engine import (
+from Samuel_AI.core.reaction_gif_engine import (
     init_reaction_db,
     classify_message_mode,
     predict_reaction_and_gif,
@@ -67,14 +67,14 @@ from ui.chats_panel import open_chats_panel
 from ui.clipboard import enable_clipboard_shortcuts
 
 from ui.voice_panel import open_voice_panel
-from tts_engine import speak_async
+from Samuel_AI.core.tts_engine import speak_async
 
 from samuel_eyes import detect_voice_command, EMOTION_MAP, predict_emotion
 
-from contacts_autosave import auto_detect_and_queue, save_contact_from_candidate
-from contacts_store import init_contacts_db, build_contacts_context
+from Samuel_AI.features.contacts_autosave import auto_detect_and_queue, save_contact_from_candidate
+from Samuel_AI.features.contacts_store import init_contacts_db, build_contacts_context
 
-from action_handler import (
+from Samuel_AI.core.action_handler import (
     ActionState, detect_intent, is_confirmation, is_cancellation,
     handle_calendar_check, handle_email_draft, handle_email_send,
     handle_calendar_add, handle_calendar_confirm,
@@ -1012,7 +1012,7 @@ class SamuelGUI:
         try:
             vw = getattr(self, "voice_win", None)
             if vw and vw.winfo_exists() and getattr(vw, "auto_speak", False):
-                from tts_engine import speak_async
+                from Samuel_AI.core.tts_engine import speak_async
                 speak_async(cleaned)
         except Exception as e:
             print("[TTS] speak failed:", e)
@@ -1103,7 +1103,7 @@ class SamuelGUI:
         self.status.config(text="● SEARCHING...", fg=ACCENT)
         threading.Thread(target=self._web_worker, args=(query,), daemon=True).start()
 
-    from web_search import research
+    from Samuel_AI.features.web_search import research
 
     def _web_worker(self, query: str):
         try:
@@ -1621,7 +1621,7 @@ class SamuelGUI:
         ).strip()
 
         try:
-            from google_calendar import build_today_context, build_calendar_context
+            from Samuel_AI.features.google_calendar import build_today_context, build_calendar_context
             cal_today = build_today_context()
             cal_week = build_calendar_context(days=7)
             if cal_today or cal_week:

@@ -3,8 +3,8 @@ import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import samuel_store as store
-from llm_ollama import ollama_chat
+import Samuel_AI.core.samuel_store as store
+from Samuel_AI.core.llm_ollama import ollama_chat
 from ui.theme import BG, PANEL, CARD, BORDER, TEXT, MUTED, ACCENT, ACCENT2, TEXT_MODEL
 from ui.prompts import build_system_prompt
 

@@ -4,7 +4,7 @@ import re
 import time
 from typing import List, Dict, Optional
 
-import samuel_store as store
+import Samuel_AI.core.samuel_store as store
 
 try:
     from sentence_transformers import SentenceTransformer, util as st_util

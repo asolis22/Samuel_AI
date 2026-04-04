@@ -4,8 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import List, Optional
 
-import samuel_store as store
-from llm_ollama import ollama_chat
+import Samuel_AI.core.samuel_store as store
+from Samuel_AI.core.llm_ollama import ollama_chat
 from ui.theme import TEXT_MODEL
 
 

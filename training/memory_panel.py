@@ -3,7 +3,7 @@ import random
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import samuel_store as store
+import Samuel_AI.core.samuel_store as store
 
 # We reuse your extractor functions, but we control WHERE the memories get saved
 from memory_autosave import (

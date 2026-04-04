@@ -6,7 +6,7 @@ from tkinter import ttk, messagebox
 import time
 from typing import Optional
 
-import contacts_store as cs
+import Samuel_AI.features.contacts_store as cs
 from ui.theme import (
     BG, PANEL, CARD, BORDER,
     TEXT, MUTED, ACCENT, ACCENT2, ACCENT3,

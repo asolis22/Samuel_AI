@@ -362,7 +362,7 @@ class GooglePanel(tk.Toplevel):
     def _check_auth(self):
         def _check():
             try:
-                from google_auth import is_authenticated, get_user_email
+                from Samuel_AI.features.google_auth import is_authenticated, get_user_email
                 if is_authenticated():
                     self._auth_ok    = True
                     self._user_email = get_user_email()
@@ -379,7 +379,7 @@ class GooglePanel(tk.Toplevel):
         )
         def _auth():
             try:
-                from google_auth import get_credentials, get_user_email
+                from Samuel_AI.features.google_auth import get_credentials, get_user_email
                 get_credentials()
                 self._auth_ok    = True
                 self._user_email = get_user_email()
@@ -413,7 +413,7 @@ class GooglePanel(tk.Toplevel):
 
         def _fetch():
             try:
-                from google_gmail import get_unread, get_inbox, search_emails
+                from Samuel_AI.features.google_gmail import get_unread, get_inbox, search_emails
                 if filt == "unread":
                     emails = get_unread(max_results=20)
                 elif filt == "search":
@@ -468,7 +468,7 @@ class GooglePanel(tk.Toplevel):
 
         def _fetch():
             try:
-                from google_calendar import get_todays_events, get_upcoming_events
+                from Samuel_AI.features.google_calendar import get_todays_events, get_upcoming_events
                 if mode == "today":
                     events = get_todays_events()
                 else:
@@ -548,7 +548,7 @@ class GooglePanel(tk.Toplevel):
 
         def _save():
             try:
-                from google_calendar import create_event
+                from Samuel_AI.features.google_calendar import create_event
                 date_str  = fields["date"].get().strip()
                 start_str = fields["start"].get().strip()
                 end_str   = fields["end"].get().strip()
@@ -579,7 +579,7 @@ class GooglePanel(tk.Toplevel):
 
         def _fetch():
             try:
-                from google_drive import search_files, list_recent_files
+                from Samuel_AI.features.google_drive import search_files, list_recent_files
                 if recent:
                     files = list_recent_files(max_results=20)
                 else:
@@ -620,7 +620,7 @@ class GooglePanel(tk.Toplevel):
 
         def _read():
             try:
-                from google_drive import read_file_text
+                from Samuel_AI.features.google_drive import read_file_text
                 content = read_file_text(f["id"])
                 self.after(0, lambda: self._set_drive_text(content))
             except Exception as e:
@@ -653,7 +653,7 @@ class GooglePanel(tk.Toplevel):
 
         def _send():
             try:
-                from google_gmail import send_email
+                from Samuel_AI.features.google_gmail import send_email
                 send_email(to, subject, body)
                 self.after(0, lambda: self._compose_status.config(
                     text="Sent!", fg="#9AD39C"))
@@ -671,7 +671,7 @@ class GooglePanel(tk.Toplevel):
 
         def _draft():
             try:
-                from google_gmail import create_draft
+                from Samuel_AI.features.google_gmail import create_draft
                 create_draft(to, subject, body)
                 self.after(0, lambda: self._compose_status.config(
                     text="Draft saved.", fg=ACCENT2))

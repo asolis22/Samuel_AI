@@ -709,7 +709,7 @@ class ExpressionTrainerPanel(tk.Toplevel):
             learned = predict_from_training(text)
             if not learned:
                 try:
-                    from emotion_detector import detect_text_emotion
+                    from Samuel_AI.features.emotion_detector import detect_text_emotion
                     result  = detect_text_emotion(text)
                     learned = EMOTION_MAP.get(result.get("emotion","neutral"), "neutral")
                 except Exception:

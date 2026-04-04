@@ -4,7 +4,7 @@
 from typing import List, Dict, Optional
 import time
 
-import samuel_store as store
+import Samuel_AI.core.samuel_store as store
 
 
 def init_db():

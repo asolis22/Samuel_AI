@@ -7,8 +7,8 @@ import threading
 import tkinter as tk
 
 from ui.theme import BG, PANEL, CARD, BORDER, TEXT, MUTED, ACCENT, ACCENT2, ACCENT3
-from tts_engine import SPEAKING_EVENT
-from stt_engine import SpeechListener
+from Samuel_AI.core.tts_engine import SPEAKING_EVENT
+from Samuel_AI.core.stt_engine import SpeechListener
 
 
 class VoicePanel(tk.Toplevel):

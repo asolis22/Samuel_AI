@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ui.theme import BG, PANEL, CARD, BORDER, TEXT, MUTED, ACCENT, ACCENT2
-from reaction_gif_engine import (
+from Samuel_AI.core.reaction_gif_engine import (
     list_training_rows, update_training_row, delete_training_row,
     predict_reaction_and_gif, save_feedback,
 )

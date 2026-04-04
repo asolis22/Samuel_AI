@@ -14,7 +14,7 @@ import time
 import threading
 from typing import Optional
 
-import samuel_store as store
+import Samuel_AI.core.samuel_store as store
 
 # ---- CONFIG ----
 TEMPORARY_TTL_HOURS      = 24.0   # temp memories live this long
@@ -137,7 +137,7 @@ def run_decay(verbose: bool = False) -> dict:
 
 _decay_thread = None
 _stop_event   = threading.Event()
-
+'''
 def start_decay_thread(interval: int = DECAY_INTERVAL_SECONDS, verbose: bool = False):
     """
     Start a daemon background thread that calls run_decay() every `interval` seconds.
@@ -157,7 +157,7 @@ def start_decay_thread(interval: int = DECAY_INTERVAL_SECONDS, verbose: bool = F
     _decay_thread.start()
     if verbose:
         print(f"[DECAY] Thread started (interval={interval}s)")
-
+'''
 
 def stop_decay_thread():
     _stop_event.set()
