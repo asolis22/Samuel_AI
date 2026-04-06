@@ -1,3 +1,5 @@
+# gui_app.py
+# VERSION: 2.0 — always-speak TTS, GIF reactions, 35 expressions
 import os
 import re
 import threading
@@ -8,8 +10,25 @@ from datetime import datetime
 from Samuel_AI.core.tools import sniff_and_read_file, image_to_base64_png
 from Samuel_AI.core.llm_ollama import ollama_chat, ollama_vision
 from Samuel_AI.core.tts_engine import speak_async
+from Samuel_AI.ui.loading_screen import LoadingScreen, run_preload
 import Samuel_AI.core.samuel_store as store
-from Samuel_AI.core.reaction_gif_engine import init_reaction_db, predict_reaction_and_gif, giphy_search_one_gif
+from Samuel_AI.core.reaction_gif_engine import init_reaction_db, predict_reaction_and_gif, fetch_reaction_gif
+from Samuel_AI.ui.eyes_ui import EXPRESSION_ALIASES, detect_expression_request
+
+# Google Calendar — injected into Samuel's context each response
+try:
+    from Samuel_AI.features.google_calendar import build_today_context, build_calendar_context
+    _CALENDAR_AVAILABLE = True
+except Exception as _cal_err:
+    print(f"[CALENDAR] Not available: {_cal_err}")
+    _CALENDAR_AVAILABLE = False
+
+    def build_today_context():
+        return ""
+
+    def build_calendar_context(days=3):
+        return ""
+
 from Samuel_AI.core.action_handler import (
     ActionState,
     detect_intent,
@@ -52,6 +71,7 @@ except Exception:
     except Exception:
         def build_smart_memory_pack(*args, **kwargs):
             return ""
+
         def build_cross_chat_pack(*args, **kwargs):
             return ""
 
@@ -63,6 +83,7 @@ except Exception:
     except Exception:
         def should_remember(*args, **kwargs):
             return True, ""
+
         def _is_ephemeral_text(*args, **kwargs):
             return False
 
@@ -74,83 +95,62 @@ except Exception:
     except Exception:
         def build_knowledge_context(*args, **kwargs):
             return ""
+
         def init_knowledge_db(*args, **kwargs):
             return None
 
 
-
-# ── Tenor GIF fallback (no API key required) ─────────────────────────
-_TENOR_KEY = "AIzaSyAyimkuYQYF_FXVALexPuGQctUWRURdCDY"  # Tenor demo key
-
-_TENOR_REACTION_MAP = {
-    "excited":    "excited happy reaction",
-    "happy":      "happy smile reaction",
-    "sad":        "sad crying reaction",
-    "anger":      "angry frustrated reaction",
-    "supportive": "supportive hug reaction",
-    "reassuring": "its okay calm reaction",
-    "comforting": "comfort gentle reaction",
-    "blessed":    "blessed grateful thankful",
-    "neutral":    "okay nodding reaction",
-}
-
-def _fetch_tenor_gif(reaction: str) -> str | None:
-    try:
-        import requests as _req, random
-        query = _TENOR_REACTION_MAP.get(reaction.split("+")[0].strip(),
-                                        reaction + " reaction")
-        r = _req.get(
-            "https://tenor.googleapis.com/v2/search",
-            params={"q": query, "key": _TENOR_KEY, "limit": 8,
-                    "contentfilter": "medium", "media_filter": "gif"},
-            timeout=10,
-        )
-        r.raise_for_status()
-        results = r.json().get("results", [])
-        if not results:
-            print(f"[GIF] Tenor returned 0 results for: {query}")
-            return None
-        item = random.choice(results[:5])
-        for fmt in ("tinygif", "mediumgif", "gif"):
-            url = item.get("media_formats", {}).get(fmt, {}).get("url")
-            if url:
-                print(f"[GIF] Tenor URL ({fmt}): {url}")
-                return url
-    except Exception as e:
-        print(f"[GIF] Tenor error: {e}")
-    return None
-# ─────────────────────────────────────────────────────────────────────
-
 class SamuelGUI:
     def __init__(self, root: tk.Tk):
-        store.init_db()
-        init_knowledge_db()
-        init_contacts_db()
-        init_reaction_db()
-
-        self.action_state = ActionState()
-
         self.root = root
         self.root.title("SAMUEL")
-        self.root.configure(bg=BG)
+        self.root.configure(bg="#0F0D0B")
         self.root.geometry("980x720")
         self.root.minsize(860, 580)
 
         style = ttk.Style()
         style.theme_use("clam")
 
+        # State placeholders
+        self.action_state = ActionState()
         self.current_chat_name = DEFAULT_CHAT
-        self.current_chat_id = store.get_or_create_chat(self.current_chat_name)
-
+        self.current_chat_id = None
         self.placeholder_text = "Type here..."
         self.voice_win = None
-
         self._last_assistant_text = ""
         self._last_assistant_ts = 0
         self.current_presence = "idle"
         self.current_expression = "neutral"
         self._samuel_day_state = "neutral"
 
+        # Show loading screen first
+        self._loader = LoadingScreen(self.root, on_complete=self._finish_init)
+        self._start_preload()
+
+    def _start_preload(self):
+        from Samuel_AI.core.tts_engine import _try_init_kokoro
+
+        tasks = [
+            ("Loading databases...", 1, store.init_db),
+            ("Loading knowledge base...", 1, init_knowledge_db),
+            ("Loading contacts...", 1, init_contacts_db),
+            ("Loading reaction data...", 1, init_reaction_db),
+            ("Warming up voice...", 3, _try_init_kokoro),
+            ("Warming up calendar...", 1, self._preload_calendar),
+            ("Almost ready...", 1, lambda: None),
+        ]
+        run_preload(self._loader, tasks, on_all_done=lambda: None)
+
+    def _preload_calendar(self):
+        try:
+            if _CALENDAR_AVAILABLE:
+                build_today_context()
+        except Exception:
+            pass
+
+    def _finish_init(self):
+        """Called by loading screen — builds the real UI."""
+        self.current_chat_id = store.get_or_create_chat(self.current_chat_name)
         self._build_layout()
         enable_clipboard_shortcuts(self.root)
         self.entry.focus_set()
@@ -181,7 +181,6 @@ class SamuelGUI:
 
         self._make_link(controls, "ATTACH", self.attach_file, fg=ACCENT2).pack(side="left", padx=(12, 8), pady=10)
         self._make_link(controls, "WEB", self.web_search_prompt, fg=ACCENT).pack(side="left", padx=8, pady=10)
-        self._make_link(controls, "VOICE", self.open_voice_panel, fg=ACCENT2).pack(side="left", padx=8, pady=10)
 
         stage = tk.Frame(self.root, bg=BG)
         stage.pack(fill="both", expand=True, padx=16, pady=(0, 10))
@@ -226,7 +225,7 @@ class SamuelGUI:
 
     def _make_link(self, parent, text, command, fg=MUTED):
         lbl = tk.Label(parent, text=text, bg=CARD, fg=fg, cursor="hand2", font=("Menlo", 12, "bold"))
-        lbl.bind("<Button-1>", lambda _e: command())
+        lbl.bind("<Button-1>", lambda _e=None: command())
         return lbl
 
     def set_presence(self, presence: str, expression: str | None = None):
@@ -250,7 +249,6 @@ class SamuelGUI:
         self.status.config(text=label, fg=color)
         self.eyes.set_state(presence, expression or self.current_expression)
         self.eyes.set_mic(presence in {"listening", "thinking", "speaking"})
-
 
     def set_caption(self, speaker: str, text: str):
         self.eyes.set_caption_typewriter(speaker, text)
@@ -306,6 +304,20 @@ class SamuelGUI:
 
     def open_voice_panel(self):
         self.voice_win = open_voice_panel(self)
+
+    def _init_calendar(self):
+        """Try to connect to Google Calendar silently on startup."""
+        if not _CALENDAR_AVAILABLE:
+            return
+        try:
+            events = build_today_context()
+            if events:
+                print("[CALENDAR] Connected — today's events loaded.")
+            else:
+                print("[CALENDAR] Connected — no events today.")
+        except Exception as e:
+            print(f"[CALENDAR] Could not connect: {e}")
+            print("[CALENDAR] Run: python Samuel_AI/features/google_auth.py to authenticate.")
 
     def _memory_pack(self, user_text):
         if _is_ephemeral_text(user_text):
@@ -364,16 +376,23 @@ class SamuelGUI:
         self._last_assistant_text = cleaned
         self._last_assistant_ts = ts
 
-        self.set_presence("speaking", self.current_expression)
-        self.set_caption("SAMUEL", cleaned)
-        store.add_message(self.current_chat_id, "assistant", cleaned, ts=ts)
+        self.set_presence("thinking", self.current_expression)
+
+        def _on_start():
+            self.root.after(0, lambda: self.set_presence("speaking", self.current_expression))
+            self.root.after(0, lambda: self.set_caption("SAMUEL", cleaned))
+            self.root.after(0, lambda: store.add_message(self.current_chat_id, "assistant", cleaned, ts=ts))
+
+        def _on_done():
+            self.root.after(0, lambda: self.set_presence("idle", self.current_expression))
 
         try:
-            vw = getattr(self, "voice_win", None)
-            if vw and vw.winfo_exists() and getattr(vw, "auto_speak", False):
-                speak_async(cleaned)
+            speak_async(cleaned, on_start=_on_start, on_done=_on_done)
         except Exception as e:
             print("[TTS] speak failed:", e)
+            self.set_presence("speaking", self.current_expression)
+            self.set_caption("SAMUEL", cleaned)
+            store.add_message(self.current_chat_id, "assistant", cleaned, ts=ts)
 
     def _direct_datetime_reply(self, user_text: str) -> bool:
         t = user_text.strip().lower()
@@ -397,40 +416,49 @@ class SamuelGUI:
 
         return False
 
-    def _maybe_show_reaction_gif(self, text: str):
-        """Show a reaction GIF overlaid on eyes for 5 seconds."""
+    def _maybe_show_reaction_gif(self, text: str, after_gif_expression: str = "neutral"):
+        """
+        GIF-first-then-eyes flow:
+        1. Check if this message deserves a GIF reaction
+        2. If yes: GIF plays for 5s, THEN eyes switch to Samuel's expression
+        3. If no GIF found: eyes react immediately
+
+        after_gif_expression = Samuel's eye expression to show after the GIF ends
+        """
         def _worker():
             try:
                 gif_data = predict_reaction_and_gif(text)
                 confidence = gif_data.get("confidence", 0.0)
-                reaction   = gif_data.get("reaction", "neutral")
-                print(f"[GIF] reaction={reaction} conf={confidence:.2f}")
+                reaction = gif_data.get("reaction", "neutral")
+                prompt = gif_data.get("gif_prompt", "")
 
-                if confidence < 0.40:
-                    print("[GIF] Confidence too low, skipping")
+                print(f"[GIF] trigger={reaction} conf={confidence:.2f} prompt='{prompt}'")
+
+                if not gif_data.get("should_react_with_gif") or confidence < 0.40:
+                    self.root.after(0, lambda: self.set_presence("idle", after_gif_expression))
                     return
 
-                import os
-                gif_url = None
-
-                if os.getenv("GIPHY_API_KEY"):
-                    gif = giphy_search_one_gif(gif_data.get("gif_prompt", reaction))
-                    if gif and gif.get("gif_url"):
-                        gif_url = gif["gif_url"]
-
-                if not gif_url:
-                    gif_url = _fetch_tenor_gif(reaction)
+                gif_url = fetch_reaction_gif(prompt) if prompt else None
 
                 if gif_url:
-                    print(f"[GIF] Showing on screen: {gif_url}")
-                    self.root.after(0, lambda url=gif_url:
-                                    self.eyes.show_reaction_gif(url, duration_ms=5000))
+                    print(f"[GIF] Playing: {gif_url}")
+                    self.root.after(
+                        0,
+                        lambda url=gif_url, expr=after_gif_expression: self.eyes.show_reaction_gif(
+                            url,
+                            duration_ms=5000,
+                            on_complete=lambda: self.root.after(0, lambda: self.set_presence("idle", expr)),
+                        ),
+                    )
                 else:
-                    print("[GIF] No gif URL found")
+                    print("[GIF] No gif found — falling back to eyes only")
+                    self.root.after(0, lambda: self.set_presence("idle", after_gif_expression))
+
             except Exception as e:
                 import traceback
                 print(f"[GIF] error: {e}")
                 traceback.print_exc()
+                self.root.after(0, lambda: self.set_presence("idle", after_gif_expression))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -591,35 +619,47 @@ class SamuelGUI:
         except Exception:
             pass
 
-        self._maybe_show_reaction_gif(user_text)
+        requested_expr = detect_expression_request(user_text)
+        if requested_expr:
+            self.set_presence("idle", requested_expr)
+            self.root.after(0, lambda e=requested_expr: self.eyes.set_state("idle", e))
 
         signal = route_emotion(user_text, tool_mode=tool_mode)
-        self.current_expression = signal.eye_expression
+        self.current_expression = requested_expr or signal.eye_expression
 
-        if signal.eye_expression == "confused":
-            self.eyes.anim_confused()
-        elif signal.eye_expression == "happy":
-            self.eyes.anim_laugh()
+        self._maybe_show_reaction_gif(user_text, after_gif_expression=self.current_expression)
 
-        self.set_presence("thinking", signal.eye_expression)
+        self.set_presence("thinking", "curious")
         threading.Thread(target=self._respond, args=(user_text, signal), daemon=True).start()
 
     def _respond(self, user_text: str, signal=None):
         now_ctx = self.get_local_datetime_context()
         mem_pack = self._memory_pack(user_text)
 
+        if _CALENDAR_AVAILABLE:
+            try:
+                cal_today = build_today_context()
+                cal_week = build_calendar_context(days=7)
+                cal_parts = [x for x in [cal_today, cal_week] if x]
+                if cal_parts:
+                    cal_block = "\n".join(cal_parts)
+                    mem_pack = cal_block + "\n\n" + mem_pack
+            except Exception as _ce:
+                print("[CALENDAR] Context error: " + str(_ce))
+
         system_prompt = build_system_prompt(now_ctx, self.current_chat_name, mem_pack)
 
         if signal:
             system_prompt += f"\n\n[EMOTIONAL CONTEXT]\n{signal.system_hint}"
 
-        # HARD RULE: Never describe or mention GIFs/images in text responses
         system_prompt += (
-            "\n\n[ABSOLUTE RULE] You are a voice assistant with a face display. "
-            "You CANNOT send, show, describe, or reference GIFs, images, memes, or any visual media. "
-            "NEVER write things like '[Image of...]', 'here is a GIF', 'here\'s a happy GIF', "
-            "'[smiling sunflower]', or anything similar. "
-            "The system handles all visuals automatically. Just respond in plain conversational text only."
+            "\n\n[ABSOLUTE RULE - NEVER BREAK THIS] "
+            "You are a TEXT-ONLY voice assistant. You CANNOT show, send, paste, describe, "
+            "suggest, or reference any GIF, image, meme, emoji sequence, or visual media. "
+            "FORBIDDEN phrases include: '[Image of', 'here is a GIF', 'here's a GIF', "
+            "'[cartoon', '[smiling', '[animated', 'check out this', 'sending you a'. "
+            "If you are tempted to show an image, DO NOT. Just respond in plain spoken words only. "
+            "The display system handles ALL visuals automatically without your involvement."
         )
 
         recent = store.get_messages(self.current_chat_id, limit=12)
@@ -634,8 +674,9 @@ class SamuelGUI:
             reply = f"I hit an error talking to Ollama.\n\n{e}"
 
         self.root.after(0, lambda: self._assistant_say(reply))
+
         final_expression = signal.eye_expression if signal else "neutral"
-        self.root.after(0, lambda: self.set_presence("idle", final_expression))
+        self.root.after(500, lambda: self.set_presence("speaking", final_expression))
 
     def _call_model_async(self, user_text: str):
         def worker():
