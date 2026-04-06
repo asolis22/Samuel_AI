@@ -5,3 +5,6 @@ google_credentials.json
 google_token.json
 *.token.json
 *.credentials.json
+data/kokoro-v1.0.onnx
+*.onnx
+data/kokoro-v1.0.onnx
