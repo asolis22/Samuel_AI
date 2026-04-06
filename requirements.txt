@@ -5,3 +5,7 @@ scipy
 soundfile
 requests
 ollama
+requests
+pillow
+pypdf
+python-docx

@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 DB_NAME = "reaction_gif_learning.db"
-DB_PATH = Path(__file__).with_name(DB_NAME)
+# Always resolve to Samuel_AI/data/ regardless of where this file lives
+DB_PATH = Path(__file__).resolve().parent.parent / "data" / DB_NAME
 GIPHY_API_KEY = os.getenv("GIPHY_API_KEY")
 GIPHY_SEARCH_URL = "https://api.giphy.com/v1/gifs/search"
 
@@ -247,7 +248,7 @@ def predict_reaction_and_gif(text: str) -> Dict:
             "gif_prompt": learned["gif_prompt"],
             "source": f"learned_match ({score:.2f})",
             "confidence": score,
-            "should_react_with_gif": score >= 0.80,
+            "should_react_with_gif": score >= 0.60,
         }
 
     reaction, conf = rule_based_reaction(text)
@@ -256,7 +257,7 @@ def predict_reaction_and_gif(text: str) -> Dict:
         "gif_prompt": fallback_gif_prompt_from_reaction(reaction),
         "source": "fallback",
         "confidence": conf,
-        "should_react_with_gif": conf >= 0.72,
+        "should_react_with_gif": conf >= 0.45,
     }
 
 
@@ -304,7 +305,7 @@ def fetch_binary(url: str) -> Optional[bytes]:
         return None
 
 def list_examples():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     cur.execute("""
@@ -340,7 +341,7 @@ def list_examples():
 
 
 def delete_example(row_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("DELETE FROM training_data WHERE id = ?", (row_id,))
     conn.commit()

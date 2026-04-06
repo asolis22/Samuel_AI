@@ -14,7 +14,7 @@ import tempfile
 import os
 import re
 import numpy as np
-from background_learner import begin_foreground_task, end_foreground_task
+
 
 # -------------------------------------------------------
 # CONSTANTS

@@ -1,36 +1,43 @@
 # tts_engine.py
-# TTS for Samuel. Tries Kokoro first, falls back to macOS say, then silent.
-# Kokoro needs two model files — auto-downloads if missing.
+# TTS for Samuel. Uses Kokoro (high quality British voice) with macOS say fallback.
+# Model files live in Samuel_AI/data/
+# voices-v1.0.bin  — upload manually (you have this)
+# kokoro-v1.0.onnx — auto-downloads if missing (~85MB)
 
 import os, re, threading, queue, time
+from pathlib import Path
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# ── Paths ──────────────────────────────────────────────────────────────
+# This file is at Samuel_AI/core/tts_engine.py
+# Data folder is at Samuel_AI/data/
+_THIS_DIR = Path(__file__).resolve().parent          # Samuel_AI/core/
+_DATA_DIR = _THIS_DIR.parent / "data"                # Samuel_AI/data/
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+MODEL_PATH  = str(_DATA_DIR / "kokoro-v1.0.onnx")
+VOICES_PATH = str(_DATA_DIR / "voices-v1.0.bin")
 
 SPEAKING_EVENT = threading.Event()
 
-# ── Performance script tags ────────────────────────────────────────────
-# [pause:beat] [pause:short] [pause:long]
-# [voice:soft] [voice:excited] [voice:slow] [voice:firm] [voice:normal]
-# [expression:happy] etc.
-
 _PAUSE_TIMES = {"beat": 0.25, "short": 0.5, "medium": 0.9, "long": 1.4}
 
+
+# ── Performance script helpers ─────────────────────────────────────────
 
 def strip_performance_tags(text: str) -> str:
     return re.sub(r"\[[\w:]+\]\s*", "", text).strip()
 
 
 def parse_performance_script(script: str):
-    """Split script into list of action dicts."""
     tokens = re.split(r"(\[[\w:]+\])", script)
     actions = []
-    pending_text = ""
+    pending = ""
     for tok in tokens:
         m = re.match(r"\[([\w]+)(?::([\w]+))?\]", tok)
         if m:
-            if pending_text.strip():
-                actions.append({"type": "speak", "text": pending_text.strip()})
-                pending_text = ""
+            if pending.strip():
+                actions.append({"type": "speak", "text": pending.strip()})
+                pending = ""
             kind, val = m.group(1), m.group(2) or ""
             if kind == "pause":
                 actions.append({"type": "pause", "duration": _PAUSE_TIMES.get(val, 0.4)})
@@ -39,91 +46,85 @@ def parse_performance_script(script: str):
             elif kind == "expression":
                 actions.append({"type": "expression", "name": val})
         else:
-            pending_text += tok
-    if pending_text.strip():
-        actions.append({"type": "speak", "text": pending_text.strip()})
+            pending += tok
+    if pending.strip():
+        actions.append({"type": "speak", "text": pending.strip()})
     return actions
 
 
-# ── Kokoro engine ──────────────────────────────────────────────────────
+# ── Kokoro ─────────────────────────────────────────────────────────────
 
-_kokoro = None
+_kokoro      = None
 _kokoro_lock = threading.Lock()
-_USE_KOKORO = False
+_USE_KOKORO  = False
 
-def _try_init_kokoro():
+
+def _download_if_missing():
+    """Download kokoro-v1.0.onnx if not present. voices-v1.0.bin must be placed manually."""
+    base_url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
+
+    if not os.path.exists(MODEL_PATH):
+        print(f"[TTS] Downloading kokoro-v1.0.onnx to {_DATA_DIR} ...")
+        try:
+            import urllib.request
+            urllib.request.urlretrieve(base_url + "kokoro-v1.0.onnx", MODEL_PATH)
+            print("[TTS] kokoro-v1.0.onnx downloaded.")
+        except Exception as e:
+            print(f"[TTS] Download failed: {e}")
+
+    if not os.path.exists(VOICES_PATH):
+        print(f"[TTS] voices-v1.0.bin not found at {VOICES_PATH}")
+        print("[TTS] Please copy voices-v1.0.bin into Samuel_AI/data/")
+
+
+def _try_init_kokoro() -> bool:
     global _kokoro, _USE_KOKORO
     with _kokoro_lock:
         if _kokoro is not None:
             return _USE_KOKORO
         try:
+            _download_if_missing()
+
+            if not os.path.exists(MODEL_PATH):
+                raise FileNotFoundError(f"kokoro-v1.0.onnx not found at {MODEL_PATH}")
+            if not os.path.exists(VOICES_PATH):
+                raise FileNotFoundError(f"voices-v1.0.bin not found at {VOICES_PATH}")
+
             from kokoro_onnx import Kokoro
-            model_path  = os.path.join(BASE_DIR, "kokoro-v1.0.onnx")
-            voices_path = os.path.join(BASE_DIR, "voices-v1.0.bin")
-
-            # Auto-download model files if missing
-            if not os.path.exists(model_path) or not os.path.exists(voices_path):
-                print("[TTS] Kokoro model files missing — downloading...")
-                _download_kokoro_models(model_path, voices_path)
-
-            print("[TTS] Loading Kokoro model...")
-            _kokoro = Kokoro(model_path, voices_path)
+            print(f"[TTS] Loading Kokoro from {_DATA_DIR} ...")
+            _kokoro     = Kokoro(MODEL_PATH, VOICES_PATH)
             _USE_KOKORO = True
-            print("[TTS] Kokoro ready.")
+            print("[TTS] Kokoro ready. Voice: bm_george (British male)")
         except Exception as e:
             print(f"[TTS] Kokoro unavailable: {e}")
-            _kokoro = False
+            print("[TTS] Falling back to macOS say command.")
+            _kokoro     = False
             _USE_KOKORO = False
         return _USE_KOKORO
 
 
-def _download_kokoro_models(model_path, voices_path):
-    """Download Kokoro model files using urllib (no requests needed)."""
-    import urllib.request
-    base_url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
-    files = [
-        (model_path,  base_url + "kokoro-v1.0.onnx"),
-        (voices_path, base_url + "voices-v1.0.bin"),
-    ]
-    for path, url in files:
-        if not os.path.exists(path):
-            print(f"[TTS] Downloading {os.path.basename(path)}...")
-            try:
-                urllib.request.urlretrieve(url, path)
-                print(f"[TTS] Downloaded {os.path.basename(path)}")
-            except Exception as e:
-                print(f"[TTS] Download failed for {os.path.basename(path)}: {e}")
-
-
 def _speak_kokoro(text: str, voice: str = "bm_george", speed: float = 1.0):
-    global _kokoro
     try:
-        import numpy as np
-        import sounddevice as sd
+        import numpy as np, sounddevice as sd
 
         samples, sr = _kokoro.create(text, voice=voice, speed=speed)
-
-        # --- sanitize audio for PortAudio/CoreAudio ---
         samples = np.asarray(samples, dtype=np.float32)
 
-        # ensure mono (1D) or (N,1)
         if samples.ndim == 2 and samples.shape[1] > 1:
             samples = samples.mean(axis=1)
         samples = samples.flatten()
 
-        # resample to a "safe" macOS rate if needed
-        target_sr = 44100
+        # Resample to 44100 if needed (macOS PortAudio is happiest here)
         if sr not in (44100, 48000):
-            x_old = np.linspace(0.0, 1.0, num=len(samples), endpoint=False)
-            new_len = int(len(samples) * (target_sr / float(sr)))
-            x_new = np.linspace(0.0, 1.0, num=new_len, endpoint=False)
+            target = 44100
+            x_old  = np.linspace(0.0, 1.0, len(samples), endpoint=False)
+            x_new  = np.linspace(0.0, 1.0, int(len(samples) * target / sr), endpoint=False)
             samples = np.interp(x_new, x_old, samples).astype(np.float32)
-            sr = target_sr
+            sr = target
 
         SPEAKING_EVENT.set()
         sd.play(samples, sr)
         sd.wait()
-
     except Exception as e:
         print(f"[TTS] Kokoro speak error: {e}")
         _speak_macos(text)
@@ -131,27 +132,32 @@ def _speak_kokoro(text: str, voice: str = "bm_george", speed: float = 1.0):
         SPEAKING_EVENT.clear()
 
 
-# ── macOS fallback ─────────────────────────────────────────────────────
+# ── macOS say fallback ─────────────────────────────────────────────────
 
 def _speak_macos(text: str):
-    """Use macOS built-in 'say' command — always available, no install needed."""
     clean = strip_performance_tags(text)
-    clean = re.sub(r'[^\w\s.,!?\'"-]', '', clean)
-    if not clean.strip():
+    clean = re.sub(r'[\x00-\x1f\x7f]', '', clean).strip()
+    if not clean:
         return
     SPEAKING_EVENT.set()
     try:
-        import subprocess
-        # Daniel is a good British male voice on macOS
-        subprocess.run(["say", "-v", "Daniel", clean],
-                       capture_output=True, timeout=60)
+        import subprocess, shutil
+        if not shutil.which("say"):
+            print("[TTS] say command not found — is this macOS?")
+            return
+        # Try Daniel (British male) first, fall back to system default
+        r = subprocess.run(["say", "-v", "Daniel", clean], timeout=120)
+        if r.returncode != 0:
+            subprocess.run(["say", clean], timeout=120)
+    except subprocess.TimeoutExpired:
+        print("[TTS] say timed out")
     except Exception as e:
         print(f"[TTS] macOS say failed: {e}")
     finally:
         SPEAKING_EVENT.clear()
 
 
-# ── Voice style → speed/voice mapping ─────────────────────────────────
+# ── Voice style params ─────────────────────────────────────────────────
 
 _STYLE_PARAMS = {
     "soft":    {"speed": 0.90},
@@ -171,16 +177,14 @@ class ScriptExecutor:
         self._style = "normal"
 
     def run(self, script: str):
-        actions = parse_performance_script(script)
-        for action in actions:
+        for action in parse_performance_script(script):
             t = action["type"]
             if t == "speak":
-                text = action["text"]
                 speed = _STYLE_PARAMS.get(self._style, {}).get("speed", 1.0)
                 if _try_init_kokoro():
-                    _speak_kokoro(text, speed=speed)
+                    _speak_kokoro(action["text"], speed=speed)
                 else:
-                    _speak_macos(text)
+                    _speak_macos(action["text"])
             elif t == "pause":
                 time.sleep(action["duration"])
             elif t == "voice_style":
@@ -197,7 +201,6 @@ class ScriptExecutor:
 
 _speak_queue  = queue.Queue()
 _speak_thread = None
-_stop_event   = threading.Event()
 
 
 def _worker():
@@ -207,10 +210,13 @@ def _worker():
             break
         script, callback = item
         try:
-            executor = ScriptExecutor(on_expression=callback)
-            executor.run(script)
+            ScriptExecutor(on_expression=callback).run(script)
         except Exception as e:
             print(f"[TTS] Worker error: {e}")
+            try:
+                _speak_macos(strip_performance_tags(script))
+            except Exception:
+                pass
         _speak_queue.task_done()
 
 
@@ -222,13 +228,12 @@ def _ensure_worker():
 
 
 def speak_async(script: str, on_expression=None):
-    """Queue a script for async speech."""
+    """Queue text/script for async speech. Safe to call from any thread."""
     _ensure_worker()
     _speak_queue.put((script, on_expression))
 
 
 def stop_speaking():
-    """Clear the queue and stop current speech."""
     while not _speak_queue.empty():
         try:
             _speak_queue.get_nowait()
@@ -243,32 +248,36 @@ def stop_speaking():
 
 
 def speak_now(text: str):
-    """Speak immediately (blocking, no queue)."""
+    """Speak immediately, blocking."""
     if _try_init_kokoro():
         _speak_kokoro(text)
     else:
         _speak_macos(text)
 
 
+# ── Pre-warm Kokoro in background at import time ───────────────────────
+# This means the first reply won't be delayed waiting for model load
+threading.Thread(target=_try_init_kokoro, daemon=True).start()
+
+
 # ── Performance script generator ──────────────────────────────────────
 
-_PERF_SYSTEM = """You are Samuel's performance director. 
+_PERF_SYSTEM = """You are Samuel's performance director.
 Convert the plain response into a performance script using these tags:
-[pause:beat] = 0.25s pause, [pause:short] = 0.5s, [pause:long] = 1.4s
+[pause:beat]=0.25s  [pause:short]=0.5s  [pause:long]=1.4s
 [voice:soft] [voice:excited] [voice:slow] [voice:firm] [voice:normal]
 [expression:happy] [expression:curious] [expression:amused] [expression:confident]
 [expression:concerned] [expression:surprised] [expression:thinking] [expression:neutral]
 
 Rules:
 - Add natural pauses between sentences
-- Change voice style to match tone
-- Add expression tags where emotional tone shifts
+- Change voice style to match emotional tone
+- Add expression tags where tone shifts
 - Keep the actual words IDENTICAL — only add tags between phrases
 - Output the script only, no explanation"""
 
 
 def generate_performance_script(response: str, llm_fn) -> str:
-    """Ask LLM to add performance tags to Samuel's response."""
     try:
         result = llm_fn([
             {"role": "system", "content": _PERF_SYSTEM},
