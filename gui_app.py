@@ -1,5 +1,5 @@
 # gui_app.py
-# VERSION: 2.0 — always-speak TTS, GIF reactions, 35 expressions
+# VERSION: 2.2 — caption fires on audio-ready, 10s timeout fallback for hung TTS
 import os
 import re
 import threading
@@ -128,14 +128,14 @@ class SamuelGUI:
         self._start_preload()
 
     def _start_preload(self):
-        from Samuel_AI.core.tts_engine import _try_init_kokoro
+        from Samuel_AI.core.tts_engine import _try_init_piper
 
         tasks = [
             ("Loading databases...", 1, store.init_db),
             ("Loading knowledge base...", 1, init_knowledge_db),
             ("Loading contacts...", 1, init_contacts_db),
             ("Loading reaction data...", 1, init_reaction_db),
-            ("Warming up voice...", 3, _try_init_kokoro),
+            ("Warming up voice...", 3, _try_init_piper),
             ("Warming up calendar...", 1, self._preload_calendar),
             ("Almost ready...", 1, lambda: None),
         ]
@@ -376,23 +376,45 @@ class SamuelGUI:
         self._last_assistant_text = cleaned
         self._last_assistant_ts = ts
 
+        # Stay on THINKING while Piper generates — caption not shown yet.
+        # _on_start fires the moment the first audio chunk is ready to stream.
         self.set_presence("thinking", self.current_expression)
 
+        # Watchdog flag: tracks whether _on_start fired within the timeout window.
+        _started = threading.Event()
+
         def _on_start():
+            """Called by tts_engine the moment the first audio chunk is ready."""
+            _started.set()
             self.root.after(0, lambda: self.set_presence("speaking", self.current_expression))
             self.root.after(0, lambda: self.set_caption("SAMUEL", cleaned))
             self.root.after(0, lambda: store.add_message(self.current_chat_id, "assistant", cleaned, ts=ts))
 
         def _on_done():
+            """Called by tts_engine after audio finishes or on any failure."""
+            _started.set()
             self.root.after(0, lambda: self.set_presence("idle", self.current_expression))
+
+        def _timeout_watchdog():
+            """
+            If Piper hasn't fired on_start within 10 seconds, force the caption
+            so Samuel doesn't stay stuck on THINKING forever.
+            """
+            if not _started.wait(timeout=10):
+                print("[TTS] Watchdog: on_start never fired after 10s — forcing caption.")
+                self.root.after(0, lambda: self.set_presence("speaking", self.current_expression))
+                self.root.after(0, lambda: self.set_caption("SAMUEL", cleaned))
+                self.root.after(0, lambda: store.add_message(self.current_chat_id, "assistant", cleaned, ts=ts))
+                self.root.after(3000, lambda: self.set_presence("idle", self.current_expression))
+
+        threading.Thread(target=_timeout_watchdog, daemon=True).start()
 
         try:
             speak_async(cleaned, on_start=_on_start, on_done=_on_done)
         except Exception as e:
-            print("[TTS] speak failed:", e)
-            self.set_presence("speaking", self.current_expression)
-            self.set_caption("SAMUEL", cleaned)
-            store.add_message(self.current_chat_id, "assistant", cleaned, ts=ts)
+            print(f"[TTS] speak_async raised immediately: {e}")
+            _on_start()
+            self.root.after(2000, lambda: self.set_presence("idle", self.current_expression))
 
     def _direct_datetime_reply(self, user_text: str) -> bool:
         t = user_text.strip().lower()
@@ -411,7 +433,7 @@ class SamuelGUI:
             return True
 
         if re.search(r"\bwhat(?:'s| is)? the date\b|\btoday'?s date\b", t):
-            self._assistant_say(f"Today’s date is {date_str}.")
+            self._assistant_say(f"Today's date is {date_str}.")
             return True
 
         return False
@@ -422,8 +444,6 @@ class SamuelGUI:
         1. Check if this message deserves a GIF reaction
         2. If yes: GIF plays for 5s, THEN eyes switch to Samuel's expression
         3. If no GIF found: eyes react immediately
-
-        after_gif_expression = Samuel's eye expression to show after the GIF ends
         """
         def _worker():
             try:
