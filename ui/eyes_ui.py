@@ -560,4 +560,210 @@ class EyesUI(tk.Frame):
                 _wavy_line(c, ex, cy, ew, col)
 
         elif expr == "laughing":
-            # Eyes squeezed to upward cu
+            # Eyes squeezed to upward curves (^_^) — NO brows
+            for ex in [lx, rx]:
+                c.create_arc(ex-ew//2, cy-ehL//2, ex+ew//2, cy+ehL//4,
+                              start=0, extent=180, style="arc",
+                              outline=col, width=8)
+
+        elif expr == "shame":
+            # Tiny dots/dashes — NO brows
+            dot_w, dot_h = 16, 8
+            for ex in [lx, rx]:
+                c.create_oval(ex-dot_w, cy-dot_h//2, ex+dot_w, cy+dot_h//2,
+                               fill=col, outline=col)
+
+        elif expr == "incredulous":
+            # Left: wide open. Right: squinted — HAS brows one up, one flat
+            big = int(self.EH * 1.2)
+            sm  = int(self.EH * 0.45)
+            _rrect(c, lx-ew//2, cy-big//2, lx+ew//2, cy+big//2, r, fill=col, outline=col)
+            x1,y1,x2,y2 = rx-ew//2, cy-sm//2, rx+ew//2, cy+sm//2
+            _rrect(c, x1, y1, x2, y2, r, fill=col, outline=col)
+            c.create_rectangle(x1-2, y1-2, x2+2, y1+int(sm*0.45), fill=BG, outline=BG)
+            self._brow(c, lx, cy-big//2, ew, "left",  dy_inner=-14, dy_outer=-10)
+            self._brow(c, rx, cy-sm//2,  ew, "right", dy_inner=4,   dy_outer=2)
+
+        elif expr == "bored":
+            # Very heavy top lid, rectangular — NO brows
+            for ex, eh in [(lx, ehL), (rx, ehR)]:
+                x1,y1,x2,y2 = ex-ew//2, cy-eh//2, ex+ew//2, cy+eh//2
+                _rrect(c, x1, y1, x2, y2, r, fill=col, outline=col)
+                c.create_rectangle(x1-2, y1-2, x2+2, y1+int(eh*0.62), fill=BG, outline=BG)
+
+        elif expr == "snooty":
+            # Eyes tilted upward/outward — HAS brows (raised outward)
+            for ex, eh in [(lx, ehL), (rx, ehR)]:
+                x1,y1,x2,y2 = ex-ew//2, cy-eh//2, ex+ew//2, cy+eh//2
+                _rrect(c, x1, y1, x2, y2, r, fill=col, outline=col)
+                # outer bottom cut (looking up)
+                if ex == lx:
+                    c.create_polygon(x1-2,y2+2, x1+int(ew*0.5),y2+2,
+                                      x1-2,y2-int(eh*0.4), fill=BG, outline=BG)
+                else:
+                    c.create_polygon(x2+2,y2+2, x2-int(ew*0.5),y2+2,
+                                      x2+2,y2-int(eh*0.4), fill=BG, outline=BG)
+            self._brow(c, lx, cy-ehL//2, ew, "left",  dy_inner=0,  dy_outer=-12)
+            self._brow(c, rx, cy-ehR//2, ew, "right", dy_inner=0,  dy_outer=-12)
+
+        elif expr == "cold":
+            # Just two thin horizontal dashes — NO brows
+            dash_h = 10
+            for ex in [lx, rx]:
+                c.create_rectangle(ex-ew//2, cy-dash_h//2, ex+ew//2, cy+dash_h//2,
+                                    fill=col, outline=col)
+
+        elif expr == "crying":
+            # Squeezed shut (curved) + teardrops — HAS brows (sad arch)
+            for ex, eh in [(lx, ehL), (rx, ehR)]:
+                c.create_arc(ex-ew//2, cy-eh//4, ex+ew//2, cy+eh//2,
+                              start=0, extent=180, style="arc",
+                              outline=col, width=8)
+                _tear(c, ex, cy+eh//2+2)
+            self._brow(c, lx, cy-ehL//2, ew, "left",  dy_inner=-10, dy_outer=4)
+            self._brow(c, rx, cy-ehR//2, ew, "right", dy_inner=-10, dy_outer=4)
+
+        elif expr == "devious":
+            # Heavy inner slant, right eye slightly larger — HAS brows (devious arch)
+            for ex, eh, scale in [(lx, ehL, 1.0), (rx, ehR, 1.12)]:
+                ew2 = int(ew * scale)
+                x1,y1,x2,y2 = ex-ew2//2, cy-eh//2, ex+ew2//2, cy+eh//2
+                _rrect(c, x1, y1, x2, y2, r, fill=col, outline=col)
+                if ex == lx:
+                    c.create_polygon(x1-2,y1-2, x2+2,y1-2, x2+2,y1+int(eh*0.55),
+                                      fill=BG, outline=BG)
+                else:
+                    c.create_polygon(x1-2,y1-2, x2+2,y1-2, x1-2,y1+int(eh*0.55),
+                                      fill=BG, outline=BG)
+            self._brow(c, lx, cy-ehL//2, ew, "left",  dy_inner=12, dy_outer=-4)
+            self._brow(c, rx, cy-ehR//2, ew, "right", dy_inner=-8, dy_outer=-14)
+
+        elif expr == "pensive":
+            # Eyes looking slightly down, slight outer slant — NO brows
+            for ex, eh in [(lx, ehL), (rx, ehR)]:
+                x1,y1,x2,y2 = ex-ew//2, cy-eh//2+8, ex+ew//2, cy+eh//2+8
+                _rrect(c, x1, y1, x2, y2, r, fill=col, outline=col)
+                if ex == lx:
+                    c.create_polygon(x1-2,y1-2, x1+int(ew*0.5),y1-2,
+                                      x1-2,y1+int(eh*0.35), fill=BG, outline=BG)
+                else:
+                    c.create_polygon(x2+2,y1-2, x2-int(ew*0.5),y1-2,
+                                      x2+2,y1+int(eh*0.35), fill=BG, outline=BG)
+
+        elif expr == "excited":
+            # Wide open + slight top cut — HAS brows (slightly raised)
+            for ex, eh in [(lx, ehL), (rx, ehR)]:
+                _rrect(c, ex-ew//2, cy-eh//2, ex+ew//2, cy+eh//2, r, fill=col, outline=col)
+            self._brow(c, lx, cy-ehL//2, ew, "left",  dy_inner=-6, dy_outer=-8)
+            self._brow(c, rx, cy-ehR//2, ew, "right", dy_inner=-6, dy_outer=-8)
+
+        elif expr == "triumph":
+            # Squinted + upward curve (smug arch bottom) — HAS brows
+            for ex, eh in [(lx, ehL), (rx, ehR)]:
+                x1,y1,x2,y2 = ex-ew//2, cy-eh//2, ex+ew//2, cy+eh//2
+                _rrect(c, x1, y1, x2, y2, r, fill=col, outline=col)
+                c.create_rectangle(x1-2, y2-int(eh*0.42), x2+2, y2+2, fill=BG, outline=BG)
+                c.create_arc(x1, y2-int(eh*0.55), x2, y2+int(eh*0.2),
+                              start=180, extent=180, style="arc",
+                              outline=col, width=6)
+            self._brow(c, lx, cy-ehL//2, ew, "left",  dy_inner=-4, dy_outer=-10)
+            self._brow(c, rx, cy-ehR//2, ew, "right", dy_inner=-4, dy_outer=-10)
+
+        else:
+            # Fallback: neutral
+            _rrect(c, lx-ew//2, cy-ehL//2, lx+ew//2, cy+ehL//2, r, fill=col, outline=col)
+            _rrect(c, rx-ew//2, cy-ehR//2, rx+ew//2, cy+ehR//2, r, fill=col, outline=col)
+
+    def _brow(self, c, cx, eye_top_y, ew, side, dy_inner=0, dy_outer=0):
+        """Draw one eyebrow. dy_inner/outer = offset from base brow height."""
+        base_y = eye_top_y - 16
+        bw     = int(ew * 0.72)
+        bx1    = cx - bw // 2
+        bx2    = cx + bw // 2
+        # left eye: inner=right(bx2), outer=left(bx1)
+        # right eye: inner=left(bx1), outer=right(bx2)
+        if side == "left":
+            ox, oy = bx1, base_y + dy_outer
+            ix, iy = bx2, base_y + dy_inner
+        else:
+            ox, oy = bx2, base_y + dy_outer
+            ix, iy = bx1, base_y + dy_inner
+        c.create_line(ox, oy, ix, iy, fill=CYAN, width=6, capstyle="round")
+
+    def _draw_caption(self, c, w, h):
+        speaker_col = USER_COL if self.caption_speaker == "YOU" else SAM_COL
+        c.create_line(w//6, h-108, w*5//6, h-108, fill="#1E1E1E", width=1)
+        c.create_text(w//2, h-92, text=self.caption_speaker, anchor="n",
+                       fill=speaker_col, font=("Menlo", 12, "bold"))
+        c.create_text(w//2, h-68, text=self.caption_text, anchor="n",
+                       fill=speaker_col, font=("Menlo", 15),
+                       width=max(300, w-80), justify="center")
+
+    def destroy(self):
+        self._stop_gif()
+        if self.anim_job:
+            try: self.after_cancel(self.anim_job)
+            except: pass
+        self.anim_job = None
+        super().destroy()
+
+
+# ─────────────────────────────────────────────────────────────────
+# GIF FRAME LOADER
+# ─────────────────────────────────────────────────────────────────
+
+def _load_gif_frames(url: str):
+    try:
+        import requests
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        raw  = resp.content
+        print(f"[GIF] Downloaded {len(raw)} bytes")
+    except Exception as e:
+        print(f"[GIF] Download failed: {e}")
+        return []
+
+    # Try Pillow first
+    try:
+        from PIL import Image, ImageTk
+        img    = Image.open(io.BytesIO(raw))
+        frames = []
+        try:
+            while True:
+                frame = img.copy().convert("RGBA")
+                frame.thumbnail((500, 380), Image.LANCZOS)
+                frames.append(ImageTk.PhotoImage(frame))
+                img.seek(img.tell() + 1)
+        except EOFError:
+            pass
+        if frames:
+            print(f"[GIF] Pillow: {len(frames)} frames")
+            return frames
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"[GIF] Pillow error: {e}")
+
+    # Tkinter native fallback
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as f:
+            f.write(raw)
+            tmp = f.name
+        frames = []
+        i = 0
+        while True:
+            try:
+                p = tk.PhotoImage(file=tmp, format=f"gif -index {i}")
+                frames.append(p)
+                i += 1
+            except Exception:
+                break
+        os.unlink(tmp)
+        if frames:
+            print(f"[GIF] tkinter: {len(frames)} frames")
+        else:
+            print("[GIF] tkinter: 0 frames")
+        return frames
+    except Exception as e:
+        print(f"[GIF] tkinter fallback error: {e}")
+        return []

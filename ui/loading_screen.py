@@ -200,4 +200,19 @@ def run_preload(screen: LoadingScreen, tasks: list, on_all_done):
             for fut in concurrent.futures.as_completed(futs):
                 label, weight = futs[fut]
                 try: fut.result()
-                except Exception
+                except Exception as e: print(f"[LOADING] '{label}': {e}")
+                done_weight += weight
+                screen.update_progress(done_weight / total_weight, label)
+
+        # Run heavy tasks sequentially
+        for label, weight, fn in heavy:
+            screen.update_progress(done_weight / total_weight, label)
+            try: fn()
+            except Exception as e: print(f"[LOADING] '{label}': {e}")
+            done_weight += weight
+            screen.update_progress(done_weight / total_weight, label)
+
+        screen.update_progress(1.0, "Ready!")
+        screen.root.after(400, on_all_done)
+
+    threading.Thread(target=_worker, daemon=True).start()
