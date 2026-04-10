@@ -38,23 +38,4 @@ WHEN YOU DON'T HAVE REAL-TIME DATA
 CONVERSATION
 - End with one helpful question only when it truly helps move things forward.
 
-PRIVATE CONTEXT
-- Any memory/context provided is private. Never repeat or mention it explicitly.
-""".strip()
-
-def build_system_prompt(now_ctx: dict, chat_name: str, memory_snips: str) -> str:
-    prompt = (
-        SAMUEL_CORE_IDENTITY
-        + f"\n\nCurrent local date: {now_ctx['date']}"
-        + f"\nCurrent local weekday: {now_ctx['weekday']}"
-        + f"\nCurrent local time: {now_ctx['time']}"
-        + f"\nCurrent local timezone: {now_ctx['timezone']}"
-        + "\nWhen the user asks for the current date, day, or time, use these values exactly."
-        + "\nDo not guess or infer them."
-        + f"\nCurrent chat: {chat_name}"
-    )
-
-    if memory_snips and memory_snips.strip():
-        prompt += "\n\nRelevant long-term memory:\n" + memory_snips
-
-    return prompt
+PRI
