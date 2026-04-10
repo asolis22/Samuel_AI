@@ -6,7 +6,7 @@ from tkinter import ttk, messagebox
 import Samuel_AI.core.samuel_store as store
 
 # We reuse your extractor functions, but we control WHERE the memories get saved
-from memory_autosave import (
+from Samuel_AI.core.memory_autosave import (
     extract_rule_memories,
     extract_event_memories,
     llm_suggest_memories,

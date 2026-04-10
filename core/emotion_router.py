@@ -3,11 +3,14 @@
 # All 28 GoEmotions categories are covered — no model loading, instant, Pi-friendly.
 # High-confidence labels from GoEmotions (gratitude F1=0.92, love F1=0.81, etc.)
 # are given priority. Rarer labels (grief, relief, pride) use sensitive patterns.
+#
+# Also includes detect_samuel_reaction() — reads social context directed AT Samuel
+# and returns an appropriate self-reaction expression (shame, pleased, incredulous, etc.)
 
 from __future__ import annotations
 import os, re
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from pathlib import Path
 
 
@@ -21,10 +24,6 @@ class EmotionSignal:
 
 
 # ── GoEmotions-informed keyword rules ─────────────────────────────────
-# Each entry: (emotion_label, confidence, [patterns])
-# Ordered by GoEmotions F1 score — highest first so best matches win.
-# Patterns use word boundaries for precision.
-
 _RULES: List[Tuple[str, float, List[str]]] = [
 
     # ── F1 > 0.80 — very reliable labels ──────────────────────────
@@ -152,7 +151,7 @@ _RULES: List[Tuple[str, float, List[str]]] = [
         r"\bthey died\b", r"\bhe died\b", r"\bshe died\b",
         r"\bi'm mourning\b", r"\bim mourning\b", r"\bfuneral\b",
     ]),
-    ("remorse", 0.64, [   # actually decent F1
+    ("remorse", 0.64, [
         r"\bi'm sorry\b", r"\bim sorry\b", r"\bi regret\b",
         r"\bi shouldn't have\b", r"\bmy fault\b", r"\bi messed up\b",
         r"\bi feel terrible\b", r"\bi feel bad about\b",
@@ -170,7 +169,7 @@ _RULES: List[Tuple[str, float, List[str]]] = [
         r"\bso relieved\b", r"\bthank god\b", r"\bfinally over\b",
         r"\bthat's a relief\b", r"\bphew\b", r"\bi was so worried\b",
     ]),
-    ("pride", 0.58, [    # decent F1
+    ("pride", 0.58, [
         r"\bi'm so proud\b", r"\bim so proud\b", r"\bproud of\b",
         r"\bi did it\b", r"\bi nailed it\b", r"\bi aced\b",
         r"\bi passed\b", r"\bi got in\b", r"\bi got the job\b",
@@ -247,11 +246,227 @@ _HINTS = {
 }
 
 
+# ─────────────────────────────────────────────────────────────────────
+# SAMUEL SELF-REACTION SYSTEM
+# Reads social context directed AT Samuel and returns his self-reaction
+# expression. Runs AFTER route_emotion and overrides eye_expression
+# when a high-confidence match is found.
+#
+# Rules ordered by priority — first match wins.
+# Each entry: (expression, confidence, [patterns])
+# ─────────────────────────────────────────────────────────────────────
+
+_SAMUEL_REACTION_RULES: List[Tuple[str, float, List[str]]] = [
+
+    # ── Being corrected / he got something wrong ───────────────────
+    ("shame", 0.90, [
+        r"\byou(?:'re| are) wrong\b",
+        r"\bthat(?:'s| is) wrong\b",
+        r"\bthat(?:'s| is) incorrect\b",
+        r"\bactually[,\s]+(?:it|that|the)\b",
+        r"\bno[,\s]+(?:that|it|you)\b",
+        r"\byou got (?:that|it) wrong\b",
+        r"\bwrong answer\b",
+        r"\bthat(?:'s| is) not right\b",
+        r"\bnot quite\b",
+        r"\bclose but\b",
+        r"\byou missed\b",
+        r"\byou(?:'re| are) mistaken\b",
+        r"\bcorrection\b",
+        r"\blet me correct\b",
+        r"\bthe correct (?:answer|one|thing)\b",
+    ]),
+
+    # ── Being praised / good job ───────────────────────────────────
+    ("pleased", 0.88, [
+        r"\bgood (?:job|work|answer|response|one)\b",
+        r"\bwell done\b",
+        r"\bnice (?:job|work|answer|one)\b",
+        r"\byou(?:'re| are) (?:so )?good\b",
+        r"\byou(?:'re| are) (?:so )?smart\b",
+        r"\byou(?:'re| are) (?:so )?helpful\b",
+        r"\byou(?:'re| are) (?:so )?great\b",
+        r"\byou(?:'re| are) amazing\b",
+        r"\bi (?:love|like) (?:that|your|you)\b",
+        r"\bperfect(?:ly)?\b",
+        r"\bexactly (?:right|what i needed)\b",
+        r"\bthank(?:s| you)[,\s]+(?:that|you|samuel)\b",
+        r"\bthat(?:'s| is) (?:exactly|just) what i (?:needed|wanted)\b",
+        r"\bkeep it up\b",
+        r"\bi(?:'m| am) impressed\b",
+    ]),
+
+    # ── Being told something weird / odd / unexpected ──────────────
+    ("incredulous", 0.85, [
+        r"\bthat(?:'s| is) (?:so )?weird\b",
+        r"\bthat(?:'s| is) (?:so )?strange\b",
+        r"\bthat(?:'s| is) (?:so )?odd\b",
+        r"\bthat(?:'s| is) (?:so )?random\b",
+        r"\bwhat(?:\?|!|\?!)\s*$",
+        r"\bwhat the\b",
+        r"\bwhat even\b",
+        r"\bwait what\b",
+        r"\bwait[,\s]+(?:what|huh)\b",
+        r"\bi don't understand\b",
+        r"\bthat makes no sense\b",
+        r"\bhow does that (?:even )?make sense\b",
+        r"\bthat(?:'s| is) not how\b",
+        r"\byou(?:'re| are) not making sense\b",
+    ]),
+
+    # ── Being told he's boring / repetitive ───────────────────────
+    ("bored", 0.82, [
+        r"\byou(?:'re| are) (?:so )?boring\b",
+        r"\bthis is (?:so )?boring\b",
+        r"\byou(?:'re| are) (?:so )?repetitive\b",
+        r"\byou keep (?:saying|repeating)\b",
+        r"\bsame (?:thing|answer|response) again\b",
+        r"\byou already said (?:that|this)\b",
+        r"\bi know[,\s]+you told me\b",
+        r"\bstop repeating\b",
+        r"\bi (?:already )?know that\b",
+        r"\bnot interesting\b",
+        r"\bso dull\b",
+    ]),
+
+    # ── Being insulted / talked down to ───────────────────────────
+    ("serious", 0.80, [
+        r"\byou(?:'re| are) (?:so )?stupid\b",
+        r"\byou(?:'re| are) (?:so )?dumb\b",
+        r"\byou(?:'re| are) (?:so )?useless\b",
+        r"\byou(?:'re| are) (?:so )?annoying\b",
+        r"\byou(?:'re| are) (?:so )?terrible\b",
+        r"\byou(?:'re| are) (?:so )?awful\b",
+        r"\bi hate you\b",
+        r"\byou(?:'re| are) the worst\b",
+        r"\bshut up\b",
+        r"\bstop talking\b",
+        r"\byou(?:'re| are) not helpful\b",
+        r"\byou(?:'re| are) bad at this\b",
+        r"\bwhat(?:'s| is) wrong with you\b",
+    ]),
+
+    # ── Being asked something deep / philosophical ─────────────────
+    ("pensive", 0.78, [
+        r"\bwhat(?:'s| is) the meaning of\b",
+        r"\bdo you (?:think|believe|feel)\b",
+        r"\bwhat(?:'s| is) your opinion\b",
+        r"\bwhat would you do if\b",
+        r"\bif you (?:could|were|had)\b",
+        r"\bdo you have (?:feelings|emotions|thoughts)\b",
+        r"\bare you (?:conscious|sentient|alive|real)\b",
+        r"\bwhat(?:'s| is) it like to be\b",
+        r"\bdo you ever\b",
+        r"\bwhat do you think about\b",
+        r"\bphilosoph\b",
+        r"\bmeaning of life\b",
+        r"\bpurpose of\b",
+    ]),
+
+    # ── Being flirted with ────────────────────────────────────────
+    ("flirty", 0.80, [
+        r"\byou(?:'re| are) (?:so )?cute\b",
+        r"\byou(?:'re| are) (?:so )?handsome\b",
+        r"\bi (?:like|love) you[,\s]*samuel\b",
+        r"\byou(?:'re| are) my (?:type|favorite)\b",
+        r"\bwill you (?:go out|date|marry)\b",
+        r"\bdo you like me\b",
+        r"\bare you single\b",
+        r"\bcrush on you\b",
+        r"\byou(?:'re| are) (?:so )?attractive\b",
+    ]),
+
+    # ── Being told something funny ────────────────────────────────
+    ("laughing", 0.82, [
+        r"\bthat(?:'s| is) (?:so )?funny\b",
+        r"\bi(?:'m| am) (?:literally )?dead\b",
+        r"\bi(?:'m| am) (?:literally )?crying\b",
+        r"\bhaha+\b",
+        r"\blol+\b",
+        r"\blmao\b",
+        r"\bstop[,\s]+(?:i'm|im) dying\b",
+        r"\bthat (?:joke|thing you said)\b",
+        r"\byou(?:'re| are) (?:so )?funny\b",
+        r"\byou(?:'re| are) hilarious\b",
+        r"\bfunniest (?:thing|response)\b",
+    ]),
+
+    # ── Being surprised / shocking news ──────────────────────────
+    ("surprised", 0.78, [
+        r"\bguess what\b",
+        r"\byou won(?:'t| will not) believe\b",
+        r"\bi have (?:big|great|crazy|wild) news\b",
+        r"\bsomething (?:crazy|wild|insane) happened\b",
+        r"\bcan you believe\b",
+        r"\byou(?:'re| are) not going to believe\b",
+        r"\bi just found out\b",
+        r"\bbig announcement\b",
+    ]),
+
+    # ── Being thanked specifically ────────────────────────────────
+    ("pleased", 0.75, [
+        r"\bthank(?:s| you)[,\s]+(?:so much|a lot|samuel|for (?:that|this|everything))\b",
+        r"\bi really appreciate (?:that|this|you|it)\b",
+        r"\bthat (?:really )?helped\b",
+        r"\byou (?:really )?helped\b",
+        r"\bthat was (?:so )?helpful\b",
+        r"\byou(?:'re| are) (?:so )?helpful\b",
+    ]),
+
+    # ── User frustrated WITH Samuel specifically ──────────────────
+    ("concerned", 0.80, [
+        r"\byou(?:'re| are) (?:not )?(?:understanding|getting it)\b",
+        r"\bthat(?:'s| is) not what i (?:meant|said|asked)\b",
+        r"\bno[,\s]+that(?:'s| is) not\b",
+        r"\byou(?:'re| are) (?:not )?(?:listening|paying attention)\b",
+        r"\bi already told you\b",
+        r"\bthat(?:'s| is) not (?:what i|the (?:right|correct))\b",
+        r"\byou(?:'re| are) (?:confusing|confused)\b",
+        r"\bi(?:'m| am) (?:so )?frustrated\b",
+        r"\bthis is (?:so )?frustrating\b",
+    ]),
+]
+
+
+def detect_samuel_reaction(text: str) -> Optional[str]:
+    """
+    Reads the social context of a message directed at Samuel and returns
+    his self-reaction eye expression, or None if no strong match found.
+
+    Priority: first rule that meets the confidence threshold wins.
+    Returns an expression name string (e.g. 'shame', 'pleased', 'incredulous')
+    or None if the message doesn't clearly warrant a self-reaction.
+    """
+    t = text.lower().strip()
+    if not t:
+        return None
+
+    best_expr = None
+    best_score = 0.0
+    THRESHOLD = 0.75  # only react if confidence is high enough
+
+    for expr, base_conf, patterns in _SAMUEL_REACTION_RULES:
+        hits = sum(1 for p in patterns if re.search(p, t))
+        if hits > 0:
+            score = min(base_conf, base_conf * (0.7 + 0.15 * hits))
+            if score > best_score:
+                best_score = score
+                best_expr = expr
+
+    if best_score >= THRESHOLD:
+        return best_expr
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# MAIN EMOTION ROUTER
+# ─────────────────────────────────────────────────────────────────────
+
 class EmotionRouter:
     def __init__(self, local_model_path: str | None = None):
-        self.model_path      = ""   # no model — keyword rules only
+        self.model_path      = ""
         self._classifier     = None
-        self._load_attempted = True  # prevent any accidental load attempts
+        self._load_attempted = True
 
     def analyze(self, text: str, tool_mode: bool = False) -> EmotionSignal:
         text = (text or "").strip()
@@ -268,18 +483,19 @@ class EmotionRouter:
             )
 
         primary, labels = self._predict(text)
-        return self._build_signal(primary, labels)
+        signal = self._build_signal(primary, labels)
+
+        # Check if message is directed AT Samuel — override eye expression if so
+        samuel_expr = detect_samuel_reaction(text)
+        if samuel_expr:
+            signal.eye_expression = samuel_expr
+
+        return signal
 
     def _load_model(self):
-        # No model loading — keyword rules only (Pi-friendly)
         return None
 
     def _predict(self, text: str) -> Tuple[str, List[Tuple[str, float]]]:
-        """
-        Score all GoEmotions labels against the text.
-        Returns (top_label, [(label, score), ...]) sorted by score.
-        Multiple emotions can match — returns all with scores.
-        """
         t = text.lower()
         scores: dict[str, float] = {}
 
@@ -288,15 +504,12 @@ class EmotionRouter:
                 continue
             hits = sum(1 for p in patterns if re.search(p, t))
             if hits > 0:
-                # More hits = higher confidence, capped at base_conf
                 score = min(base_conf, base_conf * (0.6 + 0.2 * hits))
-                # Keep highest score if emotion appears in multiple rules
                 scores[emotion] = max(scores.get(emotion, 0), score)
 
         if not scores:
             return "neutral", [("neutral", 0.5)]
 
-        # Sort by score descending
         ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         primary = ranked[0][0]
         return primary, ranked

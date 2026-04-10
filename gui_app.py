@@ -53,6 +53,8 @@ from Samuel_AI.ui.clipboard import enable_clipboard_shortcuts
 from Samuel_AI.ui.voice_panel import open_voice_panel
 from Samuel_AI.ui.eyes_ui import EyesUI
 
+# Secret access code for the memory/training panel
+
 # optional / transitional imports
 try:
     from Samuel_AI.core.memory_autosave import auto_memory_capture
@@ -128,18 +130,20 @@ class SamuelGUI:
         self._start_preload()
 
     def _start_preload(self):
-        from Samuel_AI.core.tts_engine import _try_init_piper
+            
+            from Samuel_AI.core.tts_engine import _try_init_piper 
 
-        tasks = [
-            ("Loading databases...", 1, store.init_db),
-            ("Loading knowledge base...", 1, init_knowledge_db),
-            ("Loading contacts...", 1, init_contacts_db),
-            ("Loading reaction data...", 1, init_reaction_db),
-            ("Warming up voice...", 3, _try_init_piper),
-            ("Warming up calendar...", 1, self._preload_calendar),
-            ("Almost ready...", 1, lambda: None),
-        ]
-        run_preload(self._loader, tasks, on_all_done=lambda: None)
+            tasks = [
+                ("Loading databases...", 1, store.init_db),
+                ("Loading knowledge base...", 1, init_knowledge_db),
+                ("Loading contacts...", 1, init_contacts_db),
+                ("Loading reaction data...", 1, init_reaction_db),
+                
+                ("Warming up voice...", 3, _try_init_piper), 
+                ("Warming up calendar...", 1, self._preload_calendar),
+                ("Almost ready...", 1, lambda: None),
+            ]
+            run_preload(self._loader, tasks, on_all_done=lambda: None)
 
     def _preload_calendar(self):
         try:
@@ -586,6 +590,9 @@ class SamuelGUI:
         if not user_text:
             return
 
+            self._clear_input()
+            return
+
         if self.action_state.has_pending():
             if is_confirmation(user_text):
                 self._clear_input()
@@ -643,6 +650,7 @@ class SamuelGUI:
         if requested_expr:
             self.set_presence("idle", requested_expr)
             self.root.after(0, lambda e=requested_expr: self.eyes.set_state("idle", e))
+            return  # face-only request — skip LLM
 
         signal = route_emotion(user_text, tool_mode=tool_mode)
         self.current_expression = requested_expr or signal.eye_expression

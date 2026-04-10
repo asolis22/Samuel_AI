@@ -40,10 +40,28 @@ def detect_expression_request(text: str):
     """Returns expression name if user asks to see one, else None."""
     t = text.lower().strip()
     patterns = [
+        # "show me your happy face / expression / eyes"
         r"show\s+me\s+(?:your\s+)?(\w+)\s+(?:expression|face|eyes?)",
-        r"(?:be|look|act|make a)\s+(\w+)(?:\s+(?:expression|face))?",
+        # "give me a happy face / expression"
+        r"give\s+me\s+(?:a\s+|your\s+)?(\w+)\s+(?:expression|face|eyes?)",
+        # "can you give me a happy face"
+        r"give\s+me\s+(?:a\s+)?(\w+)\s+face",
+        # "make a happy face / expression"
+        r"make\s+(?:a\s+)?(\w+)\s+(?:expression|face|eyes?)",
+        # "make your face happy"
+        r"make\s+your\s+face\s+(\w+)",
+        # "be happy / look happy / act happy"
+        r"(?:be|look|act)\s+(\w+)(?:\s+(?:expression|face))?",
+        # "happy expression please / happy face please"
         r"(\w+)\s+(?:expression|face)\s+please",
-        r"show\s+(\w+)",
+        # "show happy / show your happy"
+        r"show\s+(?:your\s+)?(\w+)",
+        # "can you look happy" / "can you be happy"
+        r"can\s+you\s+(?:look|be|act|make\s+a)\s+(\w+)",
+        # "do your happy face"
+        r"do\s+(?:your\s+)?(\w+)\s+(?:expression|face|eyes?)",
+        # "switch to happy" / "go to happy"
+        r"(?:switch|go)\s+to\s+(\w+)",
     ]
     for pat in patterns:
         m = _re.search(pat, t)
