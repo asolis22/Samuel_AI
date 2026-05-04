@@ -1,21 +1,26 @@
 # stt_engine.py
-# FINAL: Stable Push-to-Talk STT for Samuel
+# EMERGENCY DEMO VERSION — fast push-to-talk STT
 
 import threading
 import tempfile
 import os
 import numpy as np
 
+# IMPORTANT:
+# Use None first so the Pi/Mac chooses the default mic.
+# If this does not hear you, change it back to 2.
 INPUT_DEVICE = 2
+
+# IMPORTANT:
+# 16000 is much faster for Whisper than 48000.
 SAMPLE_RATE = 48000
+
 CHANNELS = 1
 DTYPE = "float32"
 
-MIN_RMS = 0.003
+MIN_RMS = 0.002
 CHUNK_S = 0.25
-MAX_RECORD_SECONDS = 10.0
-
-_audio_lock = threading.Lock()
+MAX_RECORD_SECONDS = 6.0
 
 _whisper_model = None
 _whisper_lock = threading.Lock()
@@ -24,31 +29,32 @@ _whisper_lock = threading.Lock()
 def _get_whisper():
     global _whisper_model
 
-    if _whisper_model:
+    if _whisper_model is not None:
         return _whisper_model
 
     with _whisper_lock:
-        if _whisper_model:
+        if _whisper_model is not None:
             return _whisper_model
 
         from faster_whisper import WhisperModel
 
-        print("[STT] Loading Whisper...")
+        print("[STT] Loading Whisper tiny.en...")
         _whisper_model = WhisperModel(
-            "base.en",
+            "tiny.en",
             device="cpu",
             compute_type="int8",
         )
         print("[STT] Whisper ready.")
 
-    return _whisper_model
+        return _whisper_model
 
 
 def _rms(audio):
     if audio is None or audio.size == 0:
         return 0.0
-    a = audio.astype(np.float32)
-    return float(np.sqrt(np.mean(a * a)))
+
+    audio = audio.astype(np.float32)
+    return float(np.sqrt(np.mean(audio * audio)))
 
 
 def transcribe(audio):
@@ -59,33 +65,41 @@ def transcribe(audio):
 
     audio = audio.astype(np.float32).flatten()
 
-    if _rms(audio) < MIN_RMS:
+    level = _rms(audio)
+    print("[STT] RMS:", level)
+
+    if level < MIN_RMS:
         print("[STT] Too quiet")
         return "", "en"
 
     model = _get_whisper()
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        path = f.name
+        wav_path = f.name
 
     try:
-        sf.write(path, audio, SAMPLE_RATE)
+        sf.write(wav_path, audio, SAMPLE_RATE)
+
+        print("[STT] Transcribing...")
 
         segments, info = model.transcribe(
-            path,
+            wav_path,
+            language="en",
             beam_size=1,
-            vad_filter=True,
+            vad_filter=False,
+            condition_on_previous_text=False,
         )
 
-        text = " ".join(s.text.strip() for s in segments).strip()
-        lang = getattr(info, "language", "en")
+        text = " ".join(segment.text.strip() for segment in segments).strip()
 
-        return text, lang
+        print("[STT] Transcription done.")
+
+        return text, "en"
 
     finally:
         try:
-            os.remove(path)
-        except:
+            os.remove(wav_path)
+        except Exception:
             pass
 
 
@@ -97,6 +111,15 @@ class SpeechListener:
         self._frames = []
         self._stop = threading.Event()
         self._thread = None
+
+        # Load Whisper in background so the first button press is not as slow.
+        threading.Thread(target=self._preload, daemon=True).start()
+
+    def _preload(self):
+        try:
+            _get_whisper()
+        except Exception as e:
+            print(f"[STT] Preload error: {e}")
 
     def start_ptt(self):
         if self._ptt_active:
@@ -125,33 +148,42 @@ class SpeechListener:
     def _record(self):
         import sounddevice as sd
 
-        chunk = int(SAMPLE_RATE * CHUNK_S)
+        chunk_frames = int(SAMPLE_RATE * CHUNK_S)
         max_chunks = int(MAX_RECORD_SECONDS / CHUNK_S)
         count = 0
 
         while not self._stop.is_set() and count < max_chunks:
-            audio = sd.rec(
-                chunk,
-                samplerate=SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype=DTYPE,
-                device=INPUT_DEVICE,
-            )
-            sd.wait()
-            self._frames.append(audio)
-            count += 1
+            try:
+                kwargs = {
+                    "samplerate": SAMPLE_RATE,
+                    "channels": CHANNELS,
+                    "dtype": DTYPE,
+                }
+
+                if INPUT_DEVICE is not None:
+                    kwargs["device"] = INPUT_DEVICE
+
+                audio = sd.rec(chunk_frames, **kwargs)
+                sd.wait()
+
+                self._frames.append(audio)
+                count += 1
+
+            except Exception as e:
+                print(f"[STT] Recording error: {e}")
+                break
 
     def _process(self):
         try:
             if self._thread:
-                self._thread.join(timeout=2)
+                self._thread.join(timeout=1.5)
 
             if not self._frames:
+                print("[STT] No frames captured.")
+                self.on_text("", "en")
                 return
 
-            audio = np.concatenate(self._frames).flatten()
-
-            print("[STT] RMS:", _rms(audio))
+            audio = np.concatenate(self._frames, axis=0).flatten()
 
             text, lang = transcribe(audio)
 
@@ -159,7 +191,12 @@ class SpeechListener:
                 print(f"[STT] Heard: {text}")
                 self.on_text(text, lang)
             else:
-                print("[STT] Nothing detected")
+                print("[STT] Nothing detected.")
+                self.on_text("", "en")
 
         except Exception as e:
             print(f"[STT] Error: {e}")
+            self.on_text("", "en")
+
+    def is_ptt_active(self):
+        return self._ptt_active
