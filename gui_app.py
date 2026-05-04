@@ -1,5 +1,5 @@
 # gui_app.py
-# VERSION: 2.5 -- Voice-only push-to-talk Samuel UI + ESP32 LED ring
+# VERSION: 2.6 -- Voice-only Samuel UI + touchscreen-safe mic toggle + ESP32 LED ring
 
 import os
 import re
@@ -100,14 +100,16 @@ except Exception:
     def init_knowledge_db(*args, **kwargs):
         return None
 
-# -- ESP32 LED ring ------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# ESP32 LED ring
+# ----------------------------------------------------------------------
 try:
     from Samuel_AI.core.led_controller import LEDController
     _led = LEDController()
 except Exception as _led_err:
     print(f"[LED] Not available: {_led_err}")
     _led = None
-# ------------------------------------------------------------------------------
 
 
 class SamuelGUI:
@@ -195,7 +197,7 @@ class SamuelGUI:
 
         self.status = tk.Label(
             right,
-            text="? IDLE",
+            text="● IDLE",
             bg=BG,
             fg=MUTED,
             font=("Menlo", 11, "bold"),
@@ -250,15 +252,18 @@ class SamuelGUI:
 
         self.mic_btn = tk.Button(
             self.input_bar,
-            text="HOLD TO TALK",
+            text="🎙 TAP TO TALK",
             bg=ACCENT,
             fg="#11100F",
             activebackground=ACCENT2,
             relief="flat",
             font=("Menlo", 18, "bold"),
+            command=self._toggle_mic,
         )
         self.mic_btn.pack(fill="x", padx=14, pady=14, ipady=16)
 
+        # These still work if your screen/mouse supports press/release.
+        # The command=self._toggle_mic above is the emergency touchscreen fallback.
         self.mic_btn.bind("<ButtonPress-1>", self._on_mic_press)
         self.mic_btn.bind("<ButtonRelease-1>", self._on_mic_release)
 
@@ -274,6 +279,29 @@ class SamuelGUI:
         lbl.bind("<Button-1>", lambda _e=None: command())
         return lbl
 
+    # ------------------------------------------------------------------
+    # MIC BUTTON LOGIC
+    # ------------------------------------------------------------------
+    def _is_recording(self):
+        if not self.speech_listener:
+            return False
+        try:
+            return bool(self.speech_listener.is_ptt_active())
+        except Exception:
+            return False
+
+    def _toggle_mic(self):
+        print("[GUI] MIC TOGGLE", flush=True)
+
+        if not self.speech_listener:
+            self._system_say("Voice input is not ready.")
+            return
+
+        if self._is_recording():
+            self._stop_recording()
+        else:
+            self._start_recording()
+
     def _on_mic_press(self, _e=None):
         print("[GUI] MIC PRESSED", flush=True)
 
@@ -282,12 +310,34 @@ class SamuelGUI:
             self._system_say("Voice input is not ready.")
             return "break"
 
+        if self._is_recording():
+            print("[GUI] Already recording. Press ignored.", flush=True)
+            return "break"
+
+        self._start_recording()
+        return "break"
+
+    def _on_mic_release(self, _e=None):
+        print("[GUI] MIC RELEASED", flush=True)
+
+        if not self.speech_listener:
+            print("[GUI] speech_listener is NONE on release", flush=True)
+            return "break"
+
+        if not self._is_recording():
+            print("[GUI] Release ignored because recording never started.", flush=True)
+            return "break"
+
+        self._stop_recording()
+        return "break"
+
+    def _start_recording(self):
         self.set_presence("listening", "curious")
         self.set_caption("YOU", "Listening...")
 
         if self.mic_btn:
             self.mic_btn.config(
-                text="🎙 LISTENING... RELEASE TO SEND",
+                text="🎙 LISTENING... TAP AGAIN TO SEND",
                 bg=ACCENT2,
             )
 
@@ -300,22 +350,14 @@ class SamuelGUI:
             self.set_presence("idle", "neutral")
             self._system_say("I could not start recording.")
             if self.mic_btn:
-                self.mic_btn.config(text="🎙 HOLD TO TALK", bg=ACCENT)
+                self.mic_btn.config(text="🎙 TAP TO TALK", bg=ACCENT)
 
-        return "break"
-
-    def _on_mic_release(self, _e=None):
-        print("[GUI] MIC RELEASED", flush=True)
-
-        if not self.speech_listener:
-            print("[GUI] speech_listener is NONE on release", flush=True)
-            return "break"
-
+    def _stop_recording(self):
         self.set_presence("thinking", "curious")
         self.set_caption("SAMUEL", "Processing...")
 
         if self.mic_btn:
-            self.mic_btn.config(text="🎙 HOLD TO TALK", bg=ACCENT)
+            self.mic_btn.config(text="🎙 TAP TO TALK", bg=ACCENT)
 
         try:
             print("[GUI] Calling stop_ptt()", flush=True)
@@ -326,19 +368,20 @@ class SamuelGUI:
             self.set_presence("idle", "neutral")
             self._system_say("I could not process the recording.")
 
-        return "break"
-
     def _handle_voice_text(self, text: str, lang: str = "en"):
         text = (text or "").strip()
 
-        if not text:
-            self.set_presence("idle", "neutral")
-            self._system_say("I did not catch that.")
+        if not text or text == "...":
+            self.set_presence("idle", "confused")
+            self._assistant_say("I did not catch that. Could you say it again?")
             return
 
         self.set_caption("YOU", text)
         self.process_user_text(text)
 
+    # ------------------------------------------------------------------
+    # UI STATE
+    # ------------------------------------------------------------------
     def set_presence(self, presence: str, expression: str | None = None):
         self.current_presence = presence
 
@@ -346,31 +389,32 @@ class SamuelGUI:
             self.current_expression = expression
 
         color = MUTED
-        label = "? IDLE"
+        label = "● IDLE"
 
         if presence == "listening":
             color = ACCENT2
-            label = "? LISTENING"
+            label = "● LISTENING"
         elif presence == "thinking":
             color = ACCENT
-            label = "? THINKING"
+            label = "● THINKING"
         elif presence == "speaking":
             color = "#7A5C46"
-            label = "? SPEAKING"
+            label = "● SPEAKING"
 
         self.status.config(text=label, fg=color)
         self.eyes.set_state(presence, expression or self.current_expression)
         self.eyes.set_mic(presence in {"listening", "thinking", "speaking"})
 
-        # -- LED ring ----------------------------------------------------------
         if _led:
-            if presence == "listening":
-                _led.set_listening()   # GREEN
-            elif presence in ("thinking", "speaking"):
-                _led.set_thinking()    # BLUE
-            else:
-                _led.set_idle()        # RED
-        # ----------------------------------------------------------------------
+            try:
+                if presence == "listening":
+                    _led.set_listening()   # GREEN
+                elif presence in ("thinking", "speaking"):
+                    _led.set_thinking()    # BLUE
+                else:
+                    _led.set_idle()        # RED
+            except Exception as e:
+                print(f"[LED] Error while setting LED state: {e}")
 
     def set_caption(self, speaker: str, text: str):
         self.eyes.set_caption_typewriter(speaker, text)
@@ -445,6 +489,9 @@ class SamuelGUI:
             _on_start()
             self.root.after(2000, lambda: self.set_presence("idle", self.current_expression))
 
+    # ------------------------------------------------------------------
+    # MEMORY / CONTEXT
+    # ------------------------------------------------------------------
     def _memory_pack(self, user_text):
         if _is_ephemeral_text(user_text):
             return ""
@@ -504,6 +551,9 @@ class SamuelGUI:
 
         return False
 
+    # ------------------------------------------------------------------
+    # GIF REACTION
+    # ------------------------------------------------------------------
     def _maybe_show_reaction_gif(self, text: str, after_gif_expression: str = "neutral"):
         def _worker():
             try:
@@ -545,8 +595,11 @@ class SamuelGUI:
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    # ------------------------------------------------------------------
+    # WEB / FILE / IMAGE
+    # ------------------------------------------------------------------
     def web_search_prompt(self):
-        self._system_say("Hold the microphone and say: web search, then your question.")
+        self._system_say("Tap the microphone and say: web search, then your question.")
 
     def _run_web_search(self, query: str):
         self.set_presence("thinking", "curious")
@@ -645,6 +698,9 @@ class SamuelGUI:
         self.root.after(0, lambda: self._assistant_say(reply))
         self.root.after(0, lambda: self.set_presence("idle", "neutral"))
 
+    # ------------------------------------------------------------------
+    # USER TEXT PROCESSING
+    # ------------------------------------------------------------------
     def process_user_text(self, user_text: str):
         user_text = (user_text or "").strip()
 
@@ -810,9 +866,12 @@ class SamuelGUI:
         messages.append({"role": "user", "content": user_text})
 
         try:
+            print("[LLM] Sending to Ollama...", flush=True)
             reply = ollama_chat(TEXT_MODEL, messages, temperature=0.6)
+            print("[LLM] Reply received.", flush=True)
         except Exception as e:
-            reply = f"I hit an error talking to Ollama.\n\n{e}"
+            print(f"[LLM] Error: {e}", flush=True)
+            reply = "I am having trouble reaching my language model right now."
 
         self.root.after(0, lambda: self._assistant_say(reply))
 
