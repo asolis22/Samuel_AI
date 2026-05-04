@@ -35,7 +35,7 @@ def _get_whisper():
 
         print("[STT] Loading Whisper...")
         _whisper_model = WhisperModel(
-            "base",
+            "base.en",
             device="cpu",
             compute_type="int8",
         )
