@@ -1,5 +1,6 @@
 # gui_app.py
-# VERSION: 2.2 — caption fires on audio-ready, 10s timeout fallback for hung TTS
+# VERSION: 2.4 — Voice-only push-to-talk Samuel UI
+
 import os
 import re
 import threading
@@ -10,12 +11,19 @@ from datetime import datetime
 from Samuel_AI.core.tools import sniff_and_read_file, image_to_base64_png
 from Samuel_AI.core.llm_ollama import ollama_chat, ollama_vision
 from Samuel_AI.core.tts_engine import speak_async
+from Samuel_AI.core.stt_engine import SpeechListener
 from Samuel_AI.ui.loading_screen import LoadingScreen, run_preload
-import Samuel_AI.core.samuel_store as store
-from Samuel_AI.core.reaction_gif_engine import init_reaction_db, predict_reaction_and_gif, fetch_reaction_gif
-from Samuel_AI.ui.eyes_ui import EXPRESSION_ALIASES, detect_expression_request
 
-# Google Calendar — injected into Samuel's context each response
+import Samuel_AI.core.samuel_store as store
+
+from Samuel_AI.core.reaction_gif_engine import (
+    init_reaction_db,
+    predict_reaction_and_gif,
+    fetch_reaction_gif,
+)
+
+from Samuel_AI.ui.eyes_ui import EyesUI, detect_expression_request
+
 try:
     from Samuel_AI.features.google_calendar import build_today_context, build_calendar_context
     _CALENDAR_AVAILABLE = True
@@ -40,66 +48,57 @@ from Samuel_AI.core.action_handler import (
     handle_calendar_add,
     handle_calendar_confirm,
 )
-from Samuel_AI.core.emotion_router import route_emotion
 
+from Samuel_AI.core.emotion_router import route_emotion
 from Samuel_AI.features.web_search import research
-from Samuel_AI.features.contacts_autosave import auto_detect_and_queue, save_contact_from_candidate
 from Samuel_AI.features.contacts_store import init_contacts_db, build_contacts_context
 
-from Samuel_AI.ui.theme import BG, CARD, ACCENT, ACCENT2, TEXT, MUTED, BORDER, TEXT_MODEL, VISION_MODEL, DEFAULT_CHAT
+from Samuel_AI.ui.theme import (
+    BG,
+    CARD,
+    ACCENT,
+    ACCENT2,
+    TEXT,
+    MUTED,
+    BORDER,
+    TEXT_MODEL,
+    VISION_MODEL,
+    DEFAULT_CHAT,
+)
+
 from Samuel_AI.ui.prompts import build_system_prompt
-from Samuel_AI.ui.text_utils import sanitize_markdown_links, now_ts, clean_chat_name, is_image, is_doc
+from Samuel_AI.ui.text_utils import sanitize_markdown_links, now_ts, is_image, is_doc
 from Samuel_AI.ui.clipboard import enable_clipboard_shortcuts
-from Samuel_AI.ui.voice_panel import open_voice_panel
-from Samuel_AI.ui.eyes_ui import EyesUI
 
-# Secret access code for the memory/training panel
-
-# optional / transitional imports
 try:
     from Samuel_AI.core.memory_autosave import auto_memory_capture
 except Exception:
-    try:
-        from memory_autosave import auto_memory_capture
-    except Exception:
-        def auto_memory_capture(*args, **kwargs):
-            return None
+    def auto_memory_capture(*args, **kwargs):
+        return None
 
 try:
     from Samuel_AI.core.memory_retrieval import build_smart_memory_pack, build_cross_chat_pack
 except Exception:
-    try:
-        from memory_retrieval import build_smart_memory_pack, build_cross_chat_pack
-    except Exception:
-        def build_smart_memory_pack(*args, **kwargs):
-            return ""
+    def build_smart_memory_pack(*args, **kwargs):
+        return ""
 
-        def build_cross_chat_pack(*args, **kwargs):
-            return ""
+    def build_cross_chat_pack(*args, **kwargs):
+        return ""
 
 try:
-    from Samuel_AI.core.memory_filter import should_remember, _is_ephemeral_text
+    from Samuel_AI.core.memory_filter import _is_ephemeral_text
 except Exception:
-    try:
-        from memory_filter import should_remember, _is_ephemeral_text
-    except Exception:
-        def should_remember(*args, **kwargs):
-            return True, ""
-
-        def _is_ephemeral_text(*args, **kwargs):
-            return False
+    def _is_ephemeral_text(*args, **kwargs):
+        return False
 
 try:
     from Samuel_AI.core.knowledge_store import build_knowledge_context, init_knowledge_db
 except Exception:
-    try:
-        from knowledge_store import build_knowledge_context, init_knowledge_db
-    except Exception:
-        def build_knowledge_context(*args, **kwargs):
-            return ""
+    def build_knowledge_context(*args, **kwargs):
+        return ""
 
-        def init_knowledge_db(*args, **kwargs):
-            return None
+    def init_knowledge_db(*args, **kwargs):
+        return None
 
 
 class SamuelGUI:
@@ -113,37 +112,36 @@ class SamuelGUI:
         style = ttk.Style()
         style.theme_use("clam")
 
-        # State placeholders
         self.action_state = ActionState()
         self.current_chat_name = DEFAULT_CHAT
         self.current_chat_id = None
-        self.placeholder_text = "Type here..."
-        self.voice_win = None
+
+        self.speech_listener = None
+        self.mic_btn = None
+
         self._last_assistant_text = ""
         self._last_assistant_ts = 0
+
         self.current_presence = "idle"
         self.current_expression = "neutral"
-        self._samuel_day_state = "neutral"
 
-        # Show loading screen first
         self._loader = LoadingScreen(self.root, on_complete=self._finish_init)
         self._start_preload()
 
     def _start_preload(self):
-            
-            from Samuel_AI.core.tts_engine import _try_init_piper 
+        from Samuel_AI.core.tts_engine import _try_init_piper
 
-            tasks = [
-                ("Loading databases...", 1, store.init_db),
-                ("Loading knowledge base...", 1, init_knowledge_db),
-                ("Loading contacts...", 1, init_contacts_db),
-                ("Loading reaction data...", 1, init_reaction_db),
-                
-                ("Warming up voice...", 3, _try_init_piper), 
-                ("Warming up calendar...", 1, self._preload_calendar),
-                ("Almost ready...", 1, lambda: None),
-            ]
-            run_preload(self._loader, tasks, on_all_done=lambda: None)
+        tasks = [
+            ("Loading databases...", 1, store.init_db),
+            ("Loading knowledge base...", 1, init_knowledge_db),
+            ("Loading contacts...", 1, init_contacts_db),
+            ("Loading reaction data...", 1, init_reaction_db),
+            ("Warming up voice...", 3, _try_init_piper),
+            ("Warming up calendar...", 1, self._preload_calendar),
+            ("Almost ready...", 1, lambda: None),
+        ]
+
+        run_preload(self._loader, tasks, on_all_done=lambda: None)
 
     def _preload_calendar(self):
         try:
@@ -153,22 +151,46 @@ class SamuelGUI:
             pass
 
     def _finish_init(self):
-        """Called by loading screen — builds the real UI."""
         self.current_chat_id = store.get_or_create_chat(self.current_chat_name)
         self._build_layout()
         enable_clipboard_shortcuts(self.root)
-        self.entry.focus_set()
+        self._init_voice_input()
+
+    def _init_voice_input(self):
+        try:
+            self.speech_listener = SpeechListener(
+                on_text=lambda text, lang="en": self.root.after(
+                    0, lambda: self._handle_voice_text(text, lang)
+                )
+            )
+            print("[VOICE] Push-to-talk ready.")
+        except Exception as e:
+            print(f"[VOICE] Could not initialize STT: {e}")
+            self.speech_listener = None
+            self._system_say("Voice input is not ready. Check the terminal for the microphone error.")
 
     def _build_layout(self):
         top = tk.Frame(self.root, bg=BG)
         top.pack(fill="x", padx=16, pady=(14, 8))
 
-        tk.Label(top, text="SAMUEL", bg=BG, fg=TEXT, font=("Menlo", 24, "bold")).pack(side="left")
+        tk.Label(
+            top,
+            text="SAMUEL",
+            bg=BG,
+            fg=TEXT,
+            font=("Menlo", 24, "bold"),
+        ).pack(side="left")
 
         right = tk.Frame(top, bg=BG)
         right.pack(side="right")
 
-        self.status = tk.Label(right, text="● IDLE", bg=BG, fg=MUTED, font=("Menlo", 11, "bold"))
+        self.status = tk.Label(
+            right,
+            text="● IDLE",
+            bg=BG,
+            fg=MUTED,
+            font=("Menlo", 11, "bold"),
+        )
         self.status.pack(side="right", padx=(14, 0))
 
         self.chat_lbl = tk.Label(
@@ -180,11 +202,25 @@ class SamuelGUI:
         )
         self.chat_lbl.pack(side="right")
 
-        controls = tk.Frame(self.root, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        controls = tk.Frame(
+            self.root,
+            bg=CARD,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+        )
         controls.pack(fill="x", padx=16, pady=(0, 10))
 
-        self._make_link(controls, "ATTACH", self.attach_file, fg=ACCENT2).pack(side="left", padx=(12, 8), pady=10)
-        self._make_link(controls, "WEB", self.web_search_prompt, fg=ACCENT).pack(side="left", padx=8, pady=10)
+        self._make_link(controls, "ATTACH", self.attach_file, fg=ACCENT2).pack(
+            side="left",
+            padx=(12, 8),
+            pady=10,
+        )
+
+        self._make_link(controls, "WEB", self.web_search_prompt, fg=ACCENT).pack(
+            side="left",
+            padx=8,
+            pady=10,
+        )
 
         stage = tk.Frame(self.root, bg=BG)
         stage.pack(fill="both", expand=True, padx=16, pady=(0, 10))
@@ -195,50 +231,99 @@ class SamuelGUI:
         bottom = tk.Frame(self.root, bg=BG)
         bottom.pack(fill="x", padx=16, pady=(0, 16))
 
-        self.input_bar = tk.Frame(bottom, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        self.input_bar = tk.Frame(
+            bottom,
+            bg=CARD,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+        )
         self.input_bar.pack(fill="x")
 
-        self.entry = tk.Text(
+        self.mic_btn = tk.Button(
             self.input_bar,
-            bg=CARD,
-            fg=TEXT,
-            insertbackground=ACCENT,
-            relief="flat",
-            font=("Menlo", 13),
-            height=1,
-            wrap="word",
-            undo=True,
-        )
-        self.entry.pack(side="left", fill="both", expand=True, padx=(12, 8), pady=10)
-        self.entry.bind("<Return>", self._on_enter_send)
-        self.entry.bind("<Shift-Return>", self._on_shift_enter_newline)
-        self.entry.bind("<KeyRelease>", self._auto_resize_input)
-
-        self._install_text_placeholder(self.placeholder_text)
-
-        self.send_btn = tk.Button(
-            self.input_bar,
-            text="SEND",
+            text="🎙 HOLD TO TALK",
             bg=ACCENT,
             fg="#11100F",
+            activebackground=ACCENT2,
             relief="flat",
-            font=("Menlo", 12, "bold"),
-            command=self.send_message,
+            font=("Menlo", 18, "bold"),
         )
-        self.send_btn.pack(side="right", padx=(0, 12), pady=8, ipadx=10, ipady=3)
+        self.mic_btn.pack(fill="x", padx=14, pady=14, ipady=16)
+
+        self.mic_btn.bind("<ButtonPress-1>", self._on_mic_press)
+        self.mic_btn.bind("<ButtonRelease-1>", self._on_mic_release)
 
     def _make_link(self, parent, text, command, fg=MUTED):
-        lbl = tk.Label(parent, text=text, bg=CARD, fg=fg, cursor="hand2", font=("Menlo", 12, "bold"))
+        lbl = tk.Label(
+            parent,
+            text=text,
+            bg=CARD,
+            fg=fg,
+            cursor="hand2",
+            font=("Menlo", 12, "bold"),
+        )
         lbl.bind("<Button-1>", lambda _e=None: command())
         return lbl
 
+    def _on_mic_press(self, _e=None):
+        if not self.speech_listener:
+            self._system_say("Voice input is not ready.")
+            return "break"
+
+        self.set_presence("listening", "curious")
+        self.set_caption("YOU", "Listening...")
+
+        self.mic_btn.config(
+            text="🎙 LISTENING... RELEASE TO SEND",
+            bg=ACCENT2,
+        )
+
+        try:
+            self.speech_listener.start_ptt()
+        except Exception as e:
+            print(f"[VOICE] start_ptt error: {e}")
+            self.set_presence("idle", "neutral")
+            self._system_say("I could not start recording.")
+            self.mic_btn.config(text="🎙 HOLD TO TALK", bg=ACCENT)
+
+        return "break"
+
+    def _on_mic_release(self, _e=None):
+        if not self.speech_listener:
+            return "break"
+
+        self.set_presence("thinking", "curious")
+        self.set_caption("SAMUEL", "Processing...")
+        self.mic_btn.config(text="🎙 HOLD TO TALK", bg=ACCENT)
+
+        try:
+            self.speech_listener.stop_ptt()
+        except Exception as e:
+            print(f"[VOICE] stop_ptt error: {e}")
+            self.set_presence("idle", "neutral")
+            self._system_say("I could not process the recording.")
+
+        return "break"
+
+    def _handle_voice_text(self, text: str, lang: str = "en"):
+        text = (text or "").strip()
+
+        if not text:
+            self.set_presence("idle", "neutral")
+            self._system_say("I did not catch that.")
+            return
+
+        self.set_caption("YOU", text)
+        self.process_user_text(text)
+
     def set_presence(self, presence: str, expression: str | None = None):
         self.current_presence = presence
+
         if expression:
             self.current_expression = expression
 
         color = MUTED
-        label = "● NOT ACTIVE"
+        label = "● IDLE"
 
         if presence == "listening":
             color = ACCENT2
@@ -257,71 +342,75 @@ class SamuelGUI:
     def set_caption(self, speaker: str, text: str):
         self.eyes.set_caption_typewriter(speaker, text)
 
-    def _get_input_text(self) -> str:
-        return self.entry.get("1.0", "end-1c")
+    def _system_say(self, text: str):
+        self.set_caption("SAMUEL", text)
 
-    def _clear_input(self):
-        self.entry.delete("1.0", "end")
-        self._auto_resize_input()
+    def _user_say(self, text: str):
+        ts = now_ts()
+        self.set_caption("YOU", text)
+        store.add_message(self.current_chat_id, "user", text, ts=ts)
 
-    def _on_enter_send(self, _e=None):
-        self.send_message()
-        return "break"
+    def _assistant_say(self, text: str):
+        ts = now_ts()
 
-    def _on_shift_enter_newline(self, _e=None):
-        self.entry.insert("insert", "\n")
-        self._auto_resize_input()
-        return "break"
+        text = sanitize_markdown_links(text or "")
+        cleaned = text.replace("**", "").replace("*", "").strip()
 
-    def _auto_resize_input(self, _e=None):
-        try:
-            display_lines = int(self.entry.count("1.0", "end-1c", "displaylines")[0])
-        except Exception:
-            display_lines = int(self.entry.index("end-1c").split(".")[0])
-        self.entry.configure(height=max(1, min(5, display_lines)))
-
-    def _install_text_placeholder(self, text: str):
-        self.placeholder_text = text
-        self.entry.delete("1.0", "end")
-        self.entry.insert("1.0", self.placeholder_text)
-        self.entry.tag_add("placeholder", "1.0", "end")
-        self.entry.tag_config("placeholder", foreground=MUTED)
-        self.entry.mark_set("insert", "1.0")
-
-        def clear(_e=None):
-            if self._get_input_text() == self.placeholder_text:
-                self.entry.delete("1.0", "end")
-                self.entry.tag_remove("placeholder", "1.0", "end")
-                self.entry.configure(fg=TEXT)
-
-        def restore(_e=None):
-            if not self._get_input_text().strip():
-                self.entry.delete("1.0", "end")
-                self.entry.insert("1.0", self.placeholder_text)
-                self.entry.tag_add("placeholder", "1.0", "end")
-                self.entry.tag_config("placeholder", foreground=MUTED)
-                self.entry.mark_set("insert", "1.0")
-
-        self.entry.bind("<FocusIn>", clear)
-        self.entry.bind("<FocusOut>", restore)
-        self.entry.bind("<KeyPress>", lambda _e: clear(), add=True)
-
-    def open_voice_panel(self):
-        self.voice_win = open_voice_panel(self)
-
-    def _init_calendar(self):
-        """Try to connect to Google Calendar silently on startup."""
-        if not _CALENDAR_AVAILABLE:
+        if not cleaned:
             return
+
+        if cleaned == self._last_assistant_text and (ts - self._last_assistant_ts) <= 2:
+            return
+
+        self._last_assistant_text = cleaned
+        self._last_assistant_ts = ts
+
+        self.set_presence("thinking", self.current_expression)
+
+        started = threading.Event()
+
+        def _on_start():
+            started.set()
+            self.root.after(0, lambda: self.set_presence("speaking", self.current_expression))
+            self.root.after(0, lambda: self.set_caption("SAMUEL", cleaned))
+            self.root.after(
+                0,
+                lambda: store.add_message(
+                    self.current_chat_id,
+                    "assistant",
+                    cleaned,
+                    ts=ts,
+                ),
+            )
+
+        def _on_done():
+            started.set()
+            self.root.after(0, lambda: self.set_presence("idle", self.current_expression))
+
+        def _timeout_watchdog():
+            if not started.wait(timeout=10):
+                print("[TTS] Watchdog: on_start never fired after 10s — forcing caption.")
+                self.root.after(0, lambda: self.set_presence("speaking", self.current_expression))
+                self.root.after(0, lambda: self.set_caption("SAMUEL", cleaned))
+                self.root.after(
+                    0,
+                    lambda: store.add_message(
+                        self.current_chat_id,
+                        "assistant",
+                        cleaned,
+                        ts=ts,
+                    ),
+                )
+                self.root.after(3000, lambda: self.set_presence("idle", self.current_expression))
+
+        threading.Thread(target=_timeout_watchdog, daemon=True).start()
+
         try:
-            events = build_today_context()
-            if events:
-                print("[CALENDAR] Connected — today's events loaded.")
-            else:
-                print("[CALENDAR] Connected — no events today.")
+            speak_async(cleaned, on_start=_on_start, on_done=_on_done)
         except Exception as e:
-            print(f"[CALENDAR] Could not connect: {e}")
-            print("[CALENDAR] Run: python Samuel_AI/features/google_auth.py to authenticate.")
+            print(f"[TTS] speak_async raised immediately: {e}")
+            _on_start()
+            self.root.after(2000, lambda: self.set_presence("idle", self.current_expression))
 
     def _memory_pack(self, user_text):
         if _is_ephemeral_text(user_text):
@@ -359,69 +448,9 @@ class SamuelGUI:
 
         return "\n\n".join(parts).strip()
 
-    def _system_say(self, text: str):
-        self.set_caption("SAMUEL", text)
-
-    def _user_say(self, text: str):
-        ts = now_ts()
-        self.set_caption("YOU", text)
-        store.add_message(self.current_chat_id, "user", text, ts=ts)
-
-    def _assistant_say(self, text: str):
-        ts = now_ts()
-        text = sanitize_markdown_links(text or "")
-        cleaned = text.replace("**", "").replace("*", "").strip()
-        if not cleaned:
-            return
-
-        if cleaned == self._last_assistant_text and (ts - self._last_assistant_ts) <= 2:
-            return
-
-        self._last_assistant_text = cleaned
-        self._last_assistant_ts = ts
-
-        # Stay on THINKING while Piper generates — caption not shown yet.
-        # _on_start fires the moment the first audio chunk is ready to stream.
-        self.set_presence("thinking", self.current_expression)
-
-        # Watchdog flag: tracks whether _on_start fired within the timeout window.
-        _started = threading.Event()
-
-        def _on_start():
-            """Called by tts_engine the moment the first audio chunk is ready."""
-            _started.set()
-            self.root.after(0, lambda: self.set_presence("speaking", self.current_expression))
-            self.root.after(0, lambda: self.set_caption("SAMUEL", cleaned))
-            self.root.after(0, lambda: store.add_message(self.current_chat_id, "assistant", cleaned, ts=ts))
-
-        def _on_done():
-            """Called by tts_engine after audio finishes or on any failure."""
-            _started.set()
-            self.root.after(0, lambda: self.set_presence("idle", self.current_expression))
-
-        def _timeout_watchdog():
-            """
-            If Piper hasn't fired on_start within 10 seconds, force the caption
-            so Samuel doesn't stay stuck on THINKING forever.
-            """
-            if not _started.wait(timeout=10):
-                print("[TTS] Watchdog: on_start never fired after 10s — forcing caption.")
-                self.root.after(0, lambda: self.set_presence("speaking", self.current_expression))
-                self.root.after(0, lambda: self.set_caption("SAMUEL", cleaned))
-                self.root.after(0, lambda: store.add_message(self.current_chat_id, "assistant", cleaned, ts=ts))
-                self.root.after(3000, lambda: self.set_presence("idle", self.current_expression))
-
-        threading.Thread(target=_timeout_watchdog, daemon=True).start()
-
-        try:
-            speak_async(cleaned, on_start=_on_start, on_done=_on_done)
-        except Exception as e:
-            print(f"[TTS] speak_async raised immediately: {e}")
-            _on_start()
-            self.root.after(2000, lambda: self.set_presence("idle", self.current_expression))
-
     def _direct_datetime_reply(self, user_text: str) -> bool:
         t = user_text.strip().lower()
+
         now = datetime.now().astimezone()
         date_str = now.strftime("%B %d, %Y").replace(" 0", " ")
         day_str = now.strftime("%A")
@@ -443,12 +472,6 @@ class SamuelGUI:
         return False
 
     def _maybe_show_reaction_gif(self, text: str, after_gif_expression: str = "neutral"):
-        """
-        GIF-first-then-eyes flow:
-        1. Check if this message deserves a GIF reaction
-        2. If yes: GIF plays for 5s, THEN eyes switch to Samuel's expression
-        3. If no GIF found: eyes react immediately
-        """
         def _worker():
             try:
                 gif_data = predict_reaction_and_gif(text)
@@ -471,7 +494,10 @@ class SamuelGUI:
                         lambda url=gif_url, expr=after_gif_expression: self.eyes.show_reaction_gif(
                             url,
                             duration_ms=5000,
-                            on_complete=lambda: self.root.after(0, lambda: self.set_presence("idle", expr)),
+                            on_complete=lambda: self.root.after(
+                                0,
+                                lambda: self.set_presence("idle", expr),
+                            ),
                         ),
                     )
                 else:
@@ -487,13 +513,7 @@ class SamuelGUI:
         threading.Thread(target=_worker, daemon=True).start()
 
     def web_search_prompt(self):
-        txt = self.entry.get("1.0", "end-1c").strip()
-        if txt and txt != self.placeholder_text:
-            self.entry.delete("1.0", "end")
-            self._user_say(f"web: {txt}")
-            self._run_web_search(txt)
-        else:
-            self._system_say("Type a query then click WEB.")
+        self._system_say("Hold the microphone and say: web search, then your question.")
 
     def _run_web_search(self, query: str):
         self.set_presence("thinking", "curious")
@@ -508,13 +528,18 @@ class SamuelGUI:
             return
 
         if not sources:
-            self.root.after(0, lambda: self._assistant_say(f"Searched: {query}\n\nNo good sources found."))
+            self.root.after(
+                0,
+                lambda: self._assistant_say(f"Searched: {query}\n\nNo good sources found."),
+            )
             self.root.after(0, lambda: self.set_presence("idle", "neutral"))
             return
 
         lines = [f"Searched: {query}\n", "Sources:"]
+
         for i, r in enumerate(sources[:6], 1):
             lines.append(f"{i}) {r['title']}")
+
         final = "\n".join(lines)
 
         self.root.after(0, lambda: self._assistant_say(final))
@@ -530,6 +555,7 @@ class SamuelGUI:
                 ("All files", "*.*"),
             ],
         )
+
         if not path:
             return
 
@@ -574,40 +600,63 @@ class SamuelGUI:
         system_prompt = build_system_prompt(now_ctx, self.current_chat_name, mem_snips)
 
         try:
-            reply = ollama_vision(VISION_MODEL, user_text=user_text, image_b64=b64, system=system_prompt)
+            reply = ollama_vision(
+                VISION_MODEL,
+                user_text=user_text,
+                image_b64=b64,
+                system=system_prompt,
+            )
         except Exception as e:
             reply = f"I hit an error using vision.\n\n{e}"
 
         self.root.after(0, lambda: self._assistant_say(reply))
         self.root.after(0, lambda: self.set_presence("idle", "neutral"))
 
-    def send_message(self):
-        user_text = self._get_input_text().strip()
-        if user_text:
-            self.process_user_text(user_text)
-
     def process_user_text(self, user_text: str):
+        user_text = (user_text or "").strip()
+
         if not user_text:
             return
 
-            self._clear_input()
-            return
+        lowered = user_text.lower()
+
+        if lowered.startswith("web search "):
+            query = user_text[len("web search "):].strip()
+            if query:
+                self._user_say(user_text)
+                self._run_web_search(query)
+                return
+
+        if lowered.startswith("search "):
+            query = user_text[len("search "):].strip()
+            if query:
+                self._user_say(user_text)
+                self._run_web_search(query)
+                return
 
         if self.action_state.has_pending():
             if is_confirmation(user_text):
-                self._clear_input()
                 self._user_say(user_text)
                 action = self.action_state.pending_action
+
                 if action == "email_send":
-                    handle_email_send(self.action_state, self._assistant_say, self._system_say)
+                    handle_email_send(
+                        self.action_state,
+                        self._assistant_say,
+                        self._system_say,
+                    )
                 elif action == "calendar_add":
-                    handle_calendar_confirm(self.action_state, self._system_say)
+                    handle_calendar_confirm(
+                        self.action_state,
+                        self._system_say,
+                    )
+
                 return
-            elif is_cancellation(user_text):
-                self._clear_input()
+
+            if is_cancellation(user_text):
                 self._user_say(user_text)
                 self.action_state.clear()
-                self._system_say("Cancelled. No worries!")
+                self._system_say("Cancelled. No worries.")
                 return
 
         def _llm(msgs, temperature=0.3):
@@ -617,22 +666,32 @@ class SamuelGUI:
         tool_mode = intent is not None
 
         if intent == "calendar_check":
-            self._clear_input()
             self._user_say(user_text)
             handle_calendar_check(self._assistant_say, self._system_say)
             return
-        elif intent == "email_draft":
-            self._clear_input()
+
+        if intent == "email_draft":
             self._user_say(user_text)
-            handle_email_draft(user_text, self.action_state, self._assistant_say, self._system_say, _llm)
-            return
-        elif intent == "calendar_add":
-            self._clear_input()
-            self._user_say(user_text)
-            handle_calendar_add(user_text, self.action_state, self._assistant_say, self._system_say, _llm)
+            handle_email_draft(
+                user_text,
+                self.action_state,
+                self._assistant_say,
+                self._system_say,
+                _llm,
+            )
             return
 
-        self._clear_input()
+        if intent == "calendar_add":
+            self._user_say(user_text)
+            handle_calendar_add(
+                user_text,
+                self.action_state,
+                self._assistant_say,
+                self._system_say,
+                _llm,
+            )
+            return
+
         self._user_say(user_text)
 
         if self._direct_datetime_reply(user_text):
@@ -642,23 +701,36 @@ class SamuelGUI:
         try:
             recent = store.get_messages(self.current_chat_id, limit=6)
             recent_context = "\n".join([f"{m['role']}: {m['content']}" for m in recent])
-            auto_memory_capture(user_text, recent_context=recent_context, chat_id=self.current_chat_id)
+            auto_memory_capture(
+                user_text,
+                recent_context=recent_context,
+                chat_id=self.current_chat_id,
+            )
         except Exception:
             pass
 
         requested_expr = detect_expression_request(user_text)
+
         if requested_expr:
             self.set_presence("idle", requested_expr)
             self.root.after(0, lambda e=requested_expr: self.eyes.set_state("idle", e))
-            return  # face-only request — skip LLM
+            return
 
         signal = route_emotion(user_text, tool_mode=tool_mode)
+
         self.current_expression = requested_expr or signal.eye_expression
 
-        self._maybe_show_reaction_gif(user_text, after_gif_expression=self.current_expression)
+        self._maybe_show_reaction_gif(
+            user_text,
+            after_gif_expression=self.current_expression,
+        )
 
         self.set_presence("thinking", "curious")
-        threading.Thread(target=self._respond, args=(user_text, signal), daemon=True).start()
+        threading.Thread(
+            target=self._respond,
+            args=(user_text, signal),
+            daemon=True,
+        ).start()
 
     def _respond(self, user_text: str, signal=None):
         now_ctx = self.get_local_datetime_context()
@@ -669,13 +741,18 @@ class SamuelGUI:
                 cal_today = build_today_context()
                 cal_week = build_calendar_context(days=7)
                 cal_parts = [x for x in [cal_today, cal_week] if x]
+
                 if cal_parts:
                     cal_block = "\n".join(cal_parts)
                     mem_pack = cal_block + "\n\n" + mem_pack
-            except Exception as _ce:
-                print("[CALENDAR] Context error: " + str(_ce))
+            except Exception as ce:
+                print("[CALENDAR] Context error: " + str(ce))
 
-        system_prompt = build_system_prompt(now_ctx, self.current_chat_name, mem_pack)
+        system_prompt = build_system_prompt(
+            now_ctx,
+            self.current_chat_name,
+            mem_pack,
+        )
 
         if signal:
             system_prompt += f"\n\n[EMOTIONAL CONTEXT]\n{signal.system_hint}"
@@ -691,9 +768,12 @@ class SamuelGUI:
         )
 
         recent = store.get_messages(self.current_chat_id, limit=12)
+
         messages = [{"role": "system", "content": system_prompt}]
+
         for m in recent:
             messages.append({"role": m["role"], "content": m["content"]})
+
         messages.append({"role": "user", "content": user_text})
 
         try:
@@ -710,12 +790,20 @@ class SamuelGUI:
         def worker():
             now_ctx = self.get_local_datetime_context()
             mem_snips = self._memory_pack(user_text)
-            system_prompt = build_system_prompt(now_ctx, self.current_chat_name, mem_snips)
+
+            system_prompt = build_system_prompt(
+                now_ctx,
+                self.current_chat_name,
+                mem_snips,
+            )
 
             recent = store.get_messages(self.current_chat_id, limit=12)
+
             messages = [{"role": "system", "content": system_prompt}]
+
             for m in recent:
                 messages.append({"role": m["role"], "content": m["content"]})
+
             messages.append({"role": "user", "content": user_text})
 
             try:
@@ -730,6 +818,7 @@ class SamuelGUI:
 
     def get_local_datetime_context(self):
         now = datetime.now().astimezone()
+
         return {
             "date": now.strftime("%B %d, %Y").replace(" 0", " "),
             "weekday": now.strftime("%A"),
@@ -737,7 +826,7 @@ class SamuelGUI:
             "timezone": now.tzname() or "local time",
             "iso": now.isoformat(),
         }
-#edit
+
 
 if __name__ == "__main__":
     root = tk.Tk()
