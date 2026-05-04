@@ -275,40 +275,54 @@ class SamuelGUI:
         return lbl
 
     def _on_mic_press(self, _e=None):
+        print("[GUI] MIC PRESSED", flush=True)
+
         if not self.speech_listener:
+            print("[GUI] speech_listener is NONE", flush=True)
             self._system_say("Voice input is not ready.")
             return "break"
 
         self.set_presence("listening", "curious")
         self.set_caption("YOU", "Listening...")
 
-        self.mic_btn.config(
-            text="LISTENING... RELEASE TO SEND",
-            bg=ACCENT2,
-        )
+        if self.mic_btn:
+            self.mic_btn.config(
+                text="🎙 LISTENING... RELEASE TO SEND",
+                bg=ACCENT2,
+            )
 
         try:
+            print("[GUI] Calling start_ptt()", flush=True)
             self.speech_listener.start_ptt()
+            print("[GUI] start_ptt() finished", flush=True)
         except Exception as e:
-            print(f"[VOICE] start_ptt error: {e}")
+            print(f"[VOICE] start_ptt error: {e}", flush=True)
             self.set_presence("idle", "neutral")
             self._system_say("I could not start recording.")
-            self.mic_btn.config(text="HOLD TO TALK", bg=ACCENT)
+            if self.mic_btn:
+                self.mic_btn.config(text="🎙 HOLD TO TALK", bg=ACCENT)
 
         return "break"
 
     def _on_mic_release(self, _e=None):
+        print("[GUI] MIC RELEASED", flush=True)
+
         if not self.speech_listener:
+            print("[GUI] speech_listener is NONE on release", flush=True)
             return "break"
 
         self.set_presence("thinking", "curious")
         self.set_caption("SAMUEL", "Processing...")
-        self.mic_btn.config(text="HOLD TO TALK", bg=ACCENT)
+
+        if self.mic_btn:
+            self.mic_btn.config(text="🎙 HOLD TO TALK", bg=ACCENT)
 
         try:
+            print("[GUI] Calling stop_ptt()", flush=True)
             self.speech_listener.stop_ptt()
+            print("[GUI] stop_ptt() finished", flush=True)
         except Exception as e:
-            print(f"[VOICE] stop_ptt error: {e}")
+            print(f"[VOICE] stop_ptt error: {e}", flush=True)
             self.set_presence("idle", "neutral")
             self._system_say("I could not process the recording.")
 
