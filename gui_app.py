@@ -1,5 +1,5 @@
 # gui_app.py
-# VERSION: 2.4 — Voice-only push-to-talk Samuel UI
+# VERSION: 2.5 -- Voice-only push-to-talk Samuel UI + ESP32 LED ring
 
 import os
 import re
@@ -100,6 +100,15 @@ except Exception:
     def init_knowledge_db(*args, **kwargs):
         return None
 
+# -- ESP32 LED ring ------------------------------------------------------------
+try:
+    from Samuel_AI.core.led_controller import LEDController
+    _led = LEDController()
+except Exception as _led_err:
+    print(f"[LED] Not available: {_led_err}")
+    _led = None
+# ------------------------------------------------------------------------------
+
 
 class SamuelGUI:
     def __init__(self, root: tk.Tk):
@@ -186,7 +195,7 @@ class SamuelGUI:
 
         self.status = tk.Label(
             right,
-            text="● IDLE",
+            text="? IDLE",
             bg=BG,
             fg=MUTED,
             font=("Menlo", 11, "bold"),
@@ -241,7 +250,7 @@ class SamuelGUI:
 
         self.mic_btn = tk.Button(
             self.input_bar,
-            text="🎙 HOLD TO TALK",
+            text="HOLD TO TALK",
             bg=ACCENT,
             fg="#11100F",
             activebackground=ACCENT2,
@@ -274,7 +283,7 @@ class SamuelGUI:
         self.set_caption("YOU", "Listening...")
 
         self.mic_btn.config(
-            text="🎙 LISTENING... RELEASE TO SEND",
+            text="LISTENING... RELEASE TO SEND",
             bg=ACCENT2,
         )
 
@@ -284,7 +293,7 @@ class SamuelGUI:
             print(f"[VOICE] start_ptt error: {e}")
             self.set_presence("idle", "neutral")
             self._system_say("I could not start recording.")
-            self.mic_btn.config(text="🎙 HOLD TO TALK", bg=ACCENT)
+            self.mic_btn.config(text="HOLD TO TALK", bg=ACCENT)
 
         return "break"
 
@@ -294,7 +303,7 @@ class SamuelGUI:
 
         self.set_presence("thinking", "curious")
         self.set_caption("SAMUEL", "Processing...")
-        self.mic_btn.config(text="🎙 HOLD TO TALK", bg=ACCENT)
+        self.mic_btn.config(text="HOLD TO TALK", bg=ACCENT)
 
         try:
             self.speech_listener.stop_ptt()
@@ -323,21 +332,31 @@ class SamuelGUI:
             self.current_expression = expression
 
         color = MUTED
-        label = "● IDLE"
+        label = "? IDLE"
 
         if presence == "listening":
             color = ACCENT2
-            label = "● LISTENING"
+            label = "? LISTENING"
         elif presence == "thinking":
             color = ACCENT
-            label = "● THINKING"
+            label = "? THINKING"
         elif presence == "speaking":
             color = "#7A5C46"
-            label = "● SPEAKING"
+            label = "? SPEAKING"
 
         self.status.config(text=label, fg=color)
         self.eyes.set_state(presence, expression or self.current_expression)
         self.eyes.set_mic(presence in {"listening", "thinking", "speaking"})
+
+        # -- LED ring ----------------------------------------------------------
+        if _led:
+            if presence == "listening":
+                _led.set_listening()   # GREEN
+            elif presence in ("thinking", "speaking"):
+                _led.set_thinking()    # BLUE
+            else:
+                _led.set_idle()        # RED
+        # ----------------------------------------------------------------------
 
     def set_caption(self, speaker: str, text: str):
         self.eyes.set_caption_typewriter(speaker, text)
@@ -389,7 +408,7 @@ class SamuelGUI:
 
         def _timeout_watchdog():
             if not started.wait(timeout=10):
-                print("[TTS] Watchdog: on_start never fired after 10s — forcing caption.")
+                print("[TTS] Watchdog: on_start never fired after 10s - forcing caption.")
                 self.root.after(0, lambda: self.set_presence("speaking", self.current_expression))
                 self.root.after(0, lambda: self.set_caption("SAMUEL", cleaned))
                 self.root.after(
@@ -501,7 +520,7 @@ class SamuelGUI:
                         ),
                     )
                 else:
-                    print("[GIF] No gif found — falling back to eyes only")
+                    print("[GIF] No gif found - falling back to eyes only")
                     self.root.after(0, lambda: self.set_presence("idle", after_gif_expression))
 
             except Exception as e:

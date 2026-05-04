@@ -1,6 +1,6 @@
 # ui/theme.py
 
-TEXT_MODEL = "gemma3:1b"
+TEXT_MODEL = "smollm2:135m"
 VISION_MODEL = "llava:latest"
 
 BG      = "#14100E"

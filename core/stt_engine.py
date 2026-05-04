@@ -6,8 +6,8 @@ import tempfile
 import os
 import numpy as np
 
-INPUT_DEVICE = None
-SAMPLE_RATE = 16000
+INPUT_DEVICE = 2
+SAMPLE_RATE = 48000
 CHANNELS = 1
 DTYPE = "float32"
 
@@ -35,7 +35,7 @@ def _get_whisper():
 
         print("[STT] Loading Whisper...")
         _whisper_model = WhisperModel(
-            "tiny",
+            "base",
             device="cpu",
             compute_type="int8",
         )

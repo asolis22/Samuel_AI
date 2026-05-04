@@ -1,5 +1,6 @@
 import re
 import io
+import os
 import wave
 import threading
 import traceback
@@ -93,11 +94,11 @@ def _speak_piper(text, on_start=None):
             framerate  = wav_reader.getframerate()
             raw_frames = wav_reader.readframes(wav_reader.getnframes())
 
-        audio = np.frombuffer(raw_frames, dtype=np.int16)
+        audio = np.frombuffer(raw_frames, dtype=np.int16).astype(np.float32) / 32768.0
 
         # Mix stereo down to mono if needed
         if n_channels == 2:
-            audio = audio.reshape(-1, 2).mean(axis=1).astype(np.int16)
+            audio = audio.reshape(-1, 2).mean(axis=1).astype(np.float32)
 
         print(f"[TTS] Playing {len(audio)} samples at {framerate}Hz on device {device_id}...")
 
@@ -105,7 +106,29 @@ def _speak_piper(text, on_start=None):
         if on_start:
             on_start()
 
-        sd.play(audio, framerate, device=device_id)
+        import subprocess
+        import tempfile
+        import soundfile as sf
+
+        # Convert back to int16 for aplay (Linux expects this)
+        audio_int16 = (audio * 32767).astype(np.int16)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+          wav_path = f.name
+
+        sf.write(wav_path, audio_int16, framerate)
+
+        if on_start:
+           on_start()
+
+        # Try HDMI first
+        subprocess.run(["aplay", "-D", "plughw:1,0", wav_path])
+
+        # If no sound, change to:
+        # subprocess.run(["aplay", "-D", "plughw:1,0", wav_path])
+
+        os.remove(wav_path)
+	
         sd.wait()
         print("[TTS] Playback finished.")
 
